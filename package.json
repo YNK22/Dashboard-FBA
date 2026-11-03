@@ -1,0 +1,34 @@
+{
+  "name": "dashboard-fba",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dashboard des ventes et de la rentabilité Amazon FBA (SP-API)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "sync": "tsx scripts/sync.ts",
+    "demo": "tsx scripts/seed-demo.ts",
+    "check-amazon": "tsx scripts/check-amazon.ts",
+    "import-cogs": "tsx scripts/import-cogs.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "next": "^16.4.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

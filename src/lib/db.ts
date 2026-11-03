@@ -1,0 +1,120 @@
+import Database from "better-sqlite3";
+import fs from "node:fs";
+import path from "node:path";
+import { getConfig } from "./config";
+
+/**
+ * Base SQLite locale. Un seul fichier (DATABASE_PATH), créé automatiquement.
+ * Tous les montants sont stockés en EUR.
+ */
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS orders (
+  order_id        TEXT PRIMARY KEY,
+  purchase_date   TEXT NOT NULL,          -- ISO UTC
+  last_updated    TEXT,
+  status          TEXT,                   -- PENDING, UNSHIPPED, SHIPPED, CANCELLED...
+  marketplace_id  TEXT,
+  fulfilled_by    TEXT,                   -- AMAZON (FBA) / MERCHANT (FBM)
+  is_business     INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_orders_date ON orders(purchase_date);
+
+CREATE TABLE IF NOT EXISTS order_items (
+  order_item_id   TEXT PRIMARY KEY,
+  order_id        TEXT NOT NULL,
+  sku             TEXT,
+  asin            TEXT,
+  title           TEXT,
+  quantity        INTEGER NOT NULL,
+  currency        TEXT,
+  sales_ttc       REAL NOT NULL,          -- prix payé par le client (article + port + emballage - promos), TTC
+  vat             REAL NOT NULL,          -- TVA incluse dans sales_ttc
+  unit_price_ttc  REAL,
+  price_estimated INTEGER DEFAULT 0       -- 1 si le prix n'était pas encore connu (commande en attente)
+);
+CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_items_sku ON order_items(sku);
+
+-- Lignes financières issues de l'API Finances (frais réels, remboursements, frais divers)
+CREATE TABLE IF NOT EXISTS finance_lines (
+  id               TEXT PRIMARY KEY,      -- transactionId#index
+  transaction_id   TEXT NOT NULL,
+  posted_date      TEXT NOT NULL,
+  kind             TEXT NOT NULL,         -- shipment | refund | other
+  transaction_type TEXT,
+  description      TEXT,
+  status           TEXT,
+  order_id         TEXT,
+  sku              TEXT,
+  quantity         INTEGER,
+  marketplace_id   TEXT,
+  revenue          REAL DEFAULT 0,        -- montants signés tels que présentés par Amazon (EUR)
+  tax              REAL DEFAULT 0,
+  promo            REAL DEFAULT 0,
+  fees             REAL DEFAULT 0,
+  total            REAL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_fin_order ON finance_lines(order_id);
+CREATE INDEX IF NOT EXISTS idx_fin_date ON finance_lines(posted_date);
+
+-- Coût d'achat par SKU (saisi par vous)
+CREATE TABLE IF NOT EXISTS products (
+  sku         TEXT PRIMARY KEY,
+  asin        TEXT,
+  title       TEXT,
+  cogs        REAL,                      -- prix d'achat unitaire HT (TTC si non assujetti)
+  extra_cost  REAL DEFAULT 0,            -- autres coûts unitaires : prep, transport vers Amazon...
+  updated_at  TEXT
+);
+
+-- Dépenses manuelles (publicité, logiciels, prep center...)
+CREATE TABLE IF NOT EXISTS expenses (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  date      TEXT NOT NULL,              -- YYYY-MM-DD
+  label     TEXT NOT NULL,
+  category  TEXT,
+  amount    REAL NOT NULL               -- HT (TTC si non assujetti)
+);
+
+-- Estimations de frais Amazon (API Product Fees), pour les commandes pas encore réglées
+CREATE TABLE IF NOT EXISTS fee_estimates (
+  sku            TEXT NOT NULL,
+  marketplace_id TEXT NOT NULL,
+  price          REAL NOT NULL,
+  fees           REAL NOT NULL,
+  fetched_at     TEXT NOT NULL,
+  PRIMARY KEY (sku, marketplace_id)
+);
+
+CREATE TABLE IF NOT EXISTS kv (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+`;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __fbaDb: Database.Database | undefined;
+}
+
+export function getDb(): Database.Database {
+  if (globalThis.__fbaDb) return globalThis.__fbaDb;
+  const file = path.resolve(getConfig().databasePath);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new Database(file);
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
+  db.exec(SCHEMA);
+  globalThis.__fbaDb = db;
+  return db;
+}
+
+export function kvGet(key: string): string | null {
+  const row = getDb().prepare("SELECT value FROM kv WHERE key = ?").get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function kvSet(key: string, value: string): void {
+  getDb().prepare("INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+}
