@@ -1,11 +1,34 @@
+# Déploiement en construisant l'image sur le serveur (Portainer : stack « Repository »,
+# ou en ligne de commande : docker compose up -d --build).
+# Pour utiliser l'image déjà construite par GitHub, voir docker-compose.portainer.yml.
 services:
-  dashboard:
+  dashboard-fba:
     build: .
+    image: dashboard-fba:local
+    container_name: dashboard-fba
     restart: unless-stopped
-    env_file: .env
-    environment:
-      DATABASE_PATH: /app/data/dashboard.db
     ports:
-      - "3000:3000"
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      SPAPI_CLIENT_ID: ${SPAPI_CLIENT_ID:-}
+      SPAPI_CLIENT_SECRET: ${SPAPI_CLIENT_SECRET:-}
+      SPAPI_REFRESH_TOKEN: ${SPAPI_REFRESH_TOKEN:-}
+      SPAPI_REGION: ${SPAPI_REGION:-eu}
+      MARKETPLACES: ${MARKETPLACES:-FR,DE,IT,ES,NL,BE}
+      VAT_REGISTERED: ${VAT_REGISTERED:-true}
+      FEES_VAT_RATE: ${FEES_VAT_RATE:-20}
+      VAT_RATES: ${VAT_RATES:-}
+      FX_RATES: ${FX_RATES:-}
+      RETURN_RESTOCK_RATE: ${RETURN_RESTOCK_RATE:-0}
+      FALLBACK_FEE_RATE: ${FALLBACK_FEE_RATE:-35}
+      TIMEZONE: ${TIMEZONE:-Europe/Paris}
+      TZ: ${TIMEZONE:-Europe/Paris}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      SYNC_INITIAL_DAYS: ${SYNC_INITIAL_DAYS:-60}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      DATABASE_PATH: /app/data/dashboard.db
     volumes:
-      - ./data:/app/data
+      - dashboard-fba-data:/app/data
+
+volumes:
+  dashboard-fba-data:

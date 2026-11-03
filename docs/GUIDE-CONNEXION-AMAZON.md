@@ -138,7 +138,9 @@ Toujours sur la ligne de votre application :
 
 ## Étape 6 — Configurer le dashboard
 
-Dans le dossier du projet :
+> **Vous déployez avec Portainer ?** Mettez ces valeurs dans les *Environment variables* de la stack au lieu d'un fichier `.env`, puis suivez [DEPLOIEMENT-PORTAINER.md](DEPLOIEMENT-PORTAINER.md). Les étapes 7 et 8 se font alors depuis la page **Amazon** du dashboard (boutons **Tester la connexion** et **Ré-importer**).
+
+En local, dans le dossier du projet :
 
 ```bash
 cp .env.example .env
@@ -164,6 +166,8 @@ Les autres réglages sont expliqués dans `.env.example`.
 
 ## Étape 7 — Tester la connexion
 
+Depuis le dashboard : page **Amazon** → **Tester la connexion**. Ou en ligne de commande :
+
 ```bash
 npm install
 npm run check-amazon
@@ -172,16 +176,16 @@ npm run check-amazon
 Résultat attendu :
 
 ```
-1) Fichier .env
-  ✅ identifiants présents, région eu (https://sellingpartnerapi-eu.amazon.com)
-2) Authentification Login with Amazon
-  ✅ access token obtenu
-3) Compte vendeur (Sellers API)
-  ✅ vous vendez sur : FR (A13V1IB3VIYZZH), DE (A1PA6795UKMFR9), ...
-4) Commandes (Orders API v2026-01-01, rôle « Suivi des stocks et des commandes »)
-  ✅ 10 commande(s) trouvée(s) sur les 3 derniers jours
-5) Finances (Finances API v2024-06-19, rôle « Finance et comptabilité »)
-  ✅ 42 transaction(s) sur la première page
+✅ Identifiants
+   présents · région eu · marketplaces FR, DE, IT, ES, NL, BE
+✅ Authentification Login with Amazon
+   access token obtenu
+✅ Compte vendeur (Sellers API)
+   vous vendez sur : FR, DE, IT, ES, NL, BE, ...
+✅ Commandes (rôle « Suivi des stocks et des commandes »)
+   10 commande(s) sur les 3 derniers jours (aperçu limité à 10)
+✅ Finances (rôle « Finance et comptabilité »)
+   42 transaction(s) sur la première page (7 derniers jours)
 ```
 
 ### En cas d'erreur
@@ -229,8 +233,8 @@ Ouvrez <http://localhost:3000>. Tant que le serveur tourne, il se synchronise to
 
 Sans prix d'achat, le dashboard ne peut pas calculer votre bénéfice ni votre ROI. Les produits sans prix sont signalés par **⚠**.
 
-- Page **Produits & coûts** : saisissez le prix d'achat unitaire **HT** (TTC si vous n'êtes pas assujetti) et, si besoin, un coût annexe par unité (prep center, transport jusqu'à l'entrepôt Amazon, étiquetage…).
-- Ou en masse depuis un tableur exporté en CSV :
+- Page **Produits** : saisissez le prix d'achat unitaire **HT** (TTC si vous n'êtes pas assujetti) et, si besoin, un coût annexe par unité (prep center, transport jusqu'à l'entrepôt Amazon, étiquetage…).
+- Ou en masse depuis un tableur exporté en CSV, avec le bouton **⬆ Importer un CSV** de la page Produits (ou en ligne de commande) :
 
   ```csv
   sku;prix_achat;cout_annexe
@@ -250,6 +254,8 @@ Ajoutez vos dépenses hors Amazon (publicité, logiciels…) dans la page **Dép
 
 Le dashboard doit tourner sur une machine allumée en permanence pour se synchroniser.
 
+**Option Portainer** : voir [DEPLOIEMENT-PORTAINER.md](DEPLOIEMENT-PORTAINER.md).
+
 **Option A — Votre ordinateur** (le plus simple pour commencer) : `npm start`, puis depuis votre téléphone sur le même Wi-Fi : `http://IP-de-votre-ordinateur:3000`.
 
 **Option B — Un petit serveur (VPS)**, environ 4–6 €/mois (Hetzner, OVH, Scaleway…) avec Docker :
@@ -257,7 +263,7 @@ Le dashboard doit tourner sur une machine allumée en permanence pour se synchro
 ```bash
 git clone <votre dépôt> dashboard-fba && cd dashboard-fba
 cp .env.example .env    # puis remplissez-le, avec DASHBOARD_PASSWORD obligatoirement
-docker compose up -d --build
+docker compose up -d --build   # les variables sont lues dans .env
 ```
 
 Mettez-le derrière HTTPS (par exemple [Caddy](https://caddyserver.com) : `caddy reverse-proxy --from dashboard.mondomaine.fr --to localhost:3000`).
@@ -272,5 +278,6 @@ Sur iPhone : Safari → Partager → **Sur l'écran d'accueil**. Sur Android : C
 
 - **Pourquoi les frais sont « estimés » sur les commandes récentes ?** Amazon ne publie les frais réels qu'une fois la commande expédiée et réglée (souvent 24 à 48 h après). En attendant, le dashboard estime les frais à partir de vos ventes précédentes du même produit, ou via l'API Product Fees. Les chiffres se corrigent automatiquement quand les frais réels arrivent.
 - **Commandes « en attente »** : Amazon n'indique pas toujours le prix d'une commande en attente de paiement. Le dashboard utilise le dernier prix de vente connu du produit.
+- **Vous avez déjà une application SP-API** (repricer, étiquettes, mise en vente…) ? Vous pouvez réutiliser son profil développeur : ajoutez simplement un **nouveau client d'application** « Dashboard FBA » (étape 3) avec les rôles déjà approuvés, puis autorisez-le (étape 5). Avantage : des clés séparées et surtout des **quotas séparés**. Amazon compte les quotas par couple vendeur + application, donc le dashboard ne consommera pas les requêtes de votre repricer.
 - **Version des API** : le dashboard utilise les versions actuelles (Orders API v2026-01-01, Finances API v2024-06-19). Les anciennes versions v0 sont dépréciées par Amazon (suppression prévue en 2027).
 - Documentation officielle : <https://developer-docs.amazon.com/sp-api/> (rubrique *Register as a private developer* et *Self-authorization*).

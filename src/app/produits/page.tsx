@@ -44,6 +44,21 @@ export default function ProduitsPage() {
     load();
   };
 
+  /** Import CSV : sku;prix_achat[;cout_annexe] — séparateur ; (ou , si décimales avec un point). */
+  const importCsv = async (file: File) => {
+    const lines = (await file.text()).split(/\r?\n/).filter((l) => l.trim());
+    const sep = lines[0]?.includes(";") ? ";" : ",";
+    const num = (v?: string) => (v === undefined || v.trim() === "" ? null : Number(v.trim().replace(/\s/g, "").replace(",", ".")));
+    const body = lines
+      .map((l) => l.split(sep).map((c) => c.replace(/^"|"$/g, "").trim()))
+      .map(([sku, cogs, extra]) => ({ sku, cogs: num(cogs), extra_cost: num(extra) ?? 0 }))
+      .filter((r) => r.sku && r.cogs !== null && !Number.isNaN(r.cogs)); // ignore l'en-tête et les lignes invalides
+    if (body.length === 0) return setMsg("Aucune ligne valide. Format attendu : sku;prix_achat;cout_annexe");
+    const res = await fetch("/api/cogs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    setMsg(res.ok ? `${body.length} prix d'achat importés depuis ${file.name}.` : "Erreur lors de l'import.");
+    load();
+  };
+
   const missing = rows.filter((r) => r.cogs === null).length;
   const shown = rows.filter((r) => !filter || `${r.sku} ${r.asin} ${r.title}`.toLowerCase().includes(filter.toLowerCase()));
 
@@ -68,8 +83,21 @@ export default function ProduitsPage() {
       <section className="panel">
         <div className="panel-head">
           <input className="cell" style={{ width: 260, textAlign: "left" }} placeholder="Rechercher SKU, ASIN, titre…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <label className="btn" style={{ cursor: "pointer" }}>
+            ⬆ Importer un CSV
+            <input
+              type="file"
+              accept=".csv,text/csv,text/plain"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importCsv(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
           <span className="note">
-            Import en masse : <code>npm run import-cogs -- fichier.csv</code> (colonnes <code>sku;prix_achat;cout_annexe</code>)
+            Colonnes <code>sku;prix_achat;cout_annexe</code> (export CSV de votre tableur)
           </span>
         </div>
         <div className="table-wrap">

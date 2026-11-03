@@ -24,6 +24,7 @@ Plus :
 - la **rentabilité par produit** sur la période de votre choix
 - une page **Produits & coûts** pour saisir vos prix d'achat (ou import CSV)
 - une page **Dépenses** pour vos coûts hors Amazon (publicité, logiciels, prep center…)
+- une page **Amazon** : test de la connexion, état de la synchro, ré-import de l'historique, sans ligne de commande
 
 Sur mobile, les cartes deviennent des onglets **Aujourd'hui · Hier · Mois · M-1 · Prévi.**
 
@@ -47,9 +48,8 @@ En résumé :
 2. Rôles : *Finance et comptabilité*, *Suivi des stocks et des commandes*, *Tarification*
 3. Créez l'application, copiez **Client ID** + **Client Secret**, cliquez sur **Autoriser** pour obtenir le **refresh token**
 4. `cp .env.example .env` et collez les 3 identifiants
-5. `npm run check-amazon` → tout doit être ✅
-6. `npm run demo -- --clear` puis `npm run sync`
-7. `npm run build && npm start`
+5. Déployez (Portainer, Docker ou `npm run build && npm start`)
+6. Page **Amazon** du dashboard → **Tester la connexion** → tout doit être ✅ (ou `npm run check-amazon`)
 
 ## Comment les chiffres sont calculés
 
@@ -91,10 +91,13 @@ Si vous n'êtes pas assujetti à la TVA (`VAT_REGISTERED=false`), la TVA n'est p
 
 ## Hébergement
 
+- **Portainer** (recommandé) : une image prête à l'emploi est publiée automatiquement sur `ghcr.io/ynk22/dashboard-fba` (amd64 + arm64).
+  Collez [`docker-compose.portainer.yml`](docker-compose.portainer.yml) dans une stack et renseignez les variables.
+  👉 **Guide : [docs/DEPLOIEMENT-PORTAINER.md](docs/DEPLOIEMENT-PORTAINER.md)**
+- **Docker Compose** : `docker compose up -d --build` (construit l'image sur place, la base est conservée dans un volume).
 - **Local** : `npm run build && npm start`, accessible sur votre réseau via `http://IP:3000`.
-- **Serveur / VPS avec Docker** : `docker compose up -d --build` (la base SQLite est conservée dans `./data`).
-  Définissez **`DASHBOARD_PASSWORD`** dès que le dashboard est accessible depuis Internet, et placez-le derrière HTTPS.
 
+Définissez **`DASHBOARD_PASSWORD`** dès que le dashboard est accessible depuis Internet, et placez-le derrière HTTPS.
 Le dashboard a besoin d'un disque persistant (base SQLite) et d'un processus qui tourne en continu pour la synchronisation : les hébergeurs « serverless » (Vercel, Netlify) ne conviennent pas tels quels.
 
 ## Architecture
@@ -113,8 +116,9 @@ src/
   app/                  Pages Next.js (dashboard, produits, dépenses) et routes /api/*
   components/           Cartes, graphique, formatage
   instrumentation.ts    Synchronisation automatique en arrière-plan
-  proxy.ts              Protection par mot de passe
+  proxy.ts              Protection par mot de passe (sauf /api/health, pour le healthcheck Docker)
 scripts/                sync, check-amazon, import-cogs, demo
+Dockerfile, docker-compose*.yml, .github/workflows/docker.yml   Image Docker publiée sur ghcr.io
 tests/                  Tests unitaires (node:test)
 ```
 

@@ -1,0 +1,50 @@
+# ============================================================
+#  Stack Portainer — Dashboard FBA
+#  Portainer > Stacks > Add stack > Web editor : collez ce fichier,
+#  puis renseignez les variables dans « Environment variables ».
+#  Guide : docs/DEPLOIEMENT-PORTAINER.md
+# ============================================================
+services:
+  dashboard-fba:
+    image: ghcr.io/ynk22/dashboard-fba:latest
+    container_name: dashboard-fba
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      # --- Obligatoires (voir docs/GUIDE-CONNEXION-AMAZON.md)
+      SPAPI_CLIENT_ID: ${SPAPI_CLIENT_ID}
+      SPAPI_CLIENT_SECRET: ${SPAPI_CLIENT_SECRET}
+      SPAPI_REFRESH_TOKEN: ${SPAPI_REFRESH_TOKEN}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
+      # --- Optionnelles (valeur par défaut après :-)
+      SPAPI_REGION: ${SPAPI_REGION:-eu}
+      MARKETPLACES: ${MARKETPLACES:-FR,DE,IT,ES,NL,BE}
+      VAT_REGISTERED: ${VAT_REGISTERED:-true}
+      FEES_VAT_RATE: ${FEES_VAT_RATE:-20}
+      VAT_RATES: ${VAT_RATES:-}
+      FX_RATES: ${FX_RATES:-}
+      RETURN_RESTOCK_RATE: ${RETURN_RESTOCK_RATE:-0}
+      FALLBACK_FEE_RATE: ${FALLBACK_FEE_RATE:-35}
+      TIMEZONE: ${TIMEZONE:-Europe/Paris}
+      TZ: ${TIMEZONE:-Europe/Paris}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      SYNC_INITIAL_DAYS: ${SYNC_INITIAL_DAYS:-60}
+      DATABASE_PATH: /app/data/dashboard.db
+    volumes:
+      - dashboard-fba-data:/app/data
+    # --- Si vous utilisez Traefik, décommentez et adaptez (et retirez « ports ») :
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.dashboard-fba.rule=Host(`fba.mondomaine.fr`)
+    #   - traefik.http.routers.dashboard-fba.entrypoints=websecure
+    #   - traefik.http.routers.dashboard-fba.tls.certresolver=letsencrypt
+    #   - traefik.http.services.dashboard-fba.loadbalancer.server.port=3000
+    # networks: [proxy]
+
+volumes:
+  dashboard-fba-data:
+
+# networks:
+#   proxy:
+#     external: true

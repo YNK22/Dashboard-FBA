@@ -88,13 +88,13 @@ export default function Dashboard() {
       {data?.demo && (
         <div className="banner">
           <strong>Données de démonstration.</strong> Pour afficher vos vraies ventes : suivez le guide{" "}
-          <code>docs/GUIDE-CONNEXION-AMAZON.md</code>, puis <code>npm run demo -- --clear</code> et <code>npm run sync</code>.
+          <code>docs/GUIDE-CONNEXION-AMAZON.md</code>, puis effacez la démo depuis la page <a href="/connexion">Connexion Amazon</a>.
         </div>
       )}
       {data && !data.demo && !data.connected && (
         <div className="banner">
-          <strong>Amazon n&apos;est pas encore connecté.</strong> Renseignez vos identifiants SP-API dans le fichier <code>.env</code> (voir{" "}
-          <code>docs/GUIDE-CONNEXION-AMAZON.md</code>), ou lancez <code>npm run demo</code> pour tester avec des données fictives.
+          <strong>Amazon n&apos;est pas encore connecté.</strong> Renseignez vos identifiants SP-API (fichier <code>.env</code> ou variables de la
+          stack Portainer, voir <code>docs/GUIDE-CONNEXION-AMAZON.md</code>), puis testez depuis la page <a href="/connexion">Connexion Amazon</a>.
         </div>
       )}
       {(error || data?.sync.lastError) && <div className="banner error">⚠ {error ?? `Dernière synchro en erreur : ${data?.sync.lastError}`}</div>}
