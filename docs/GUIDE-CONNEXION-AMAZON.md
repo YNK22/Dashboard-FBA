@@ -97,18 +97,20 @@ Validez. Le statut passe à **« En cours d'examen »**. Amazon répond généra
 
 ---
 
-## Étape 3 — Créer l'application
+## Étape 3 — Créer l'application (en **Production**)
 
-Une fois le profil approuvé, retournez dans **Applications et services → Développer des applications** :
+Une fois le profil approuvé, ouvrez le **Centre des développeurs** : sur le *Solution Provider Portal* (`solutionproviderportal.amazon.com`, menu **Applications → Développer des applications**) ou sur Seller Central (lien de l'étape 1).
 
-1. Cliquez sur **« Ajouter un nouveau client d'application »** (*Add new app client*).
+1. Cliquez sur **« Ajouter une nouvelle application client »** (*Add new app client*).
 2. Remplissez :
    - **Nom de l'application** : `Dashboard FBA`
    - **Type d'API** : **SP API**
-   - **Type** : **Vendeur** (*Seller*)
-   - **Rôles** : cochez les mêmes trois rôles qu'à l'étape 2.3
-   - Laissez vides les champs « URI de redirection OAuth » et « URI de connexion » (inutiles pour une application privée).
-3. **Enregistrer et quitter**.
+   - **Type d'application** : **Production** ⚠️ et non *Sandbox*
+   - **Rôles** : cochez les rôles de l'étape 2.3 (seuls les rôles approuvés sur votre profil sont proposés)
+   - **URI de redirection / de connexion** : inutiles pour une application privée. Si le formulaire les exige, mettez l'adresse de votre dashboard (ex. `https://fba.mondomaine.fr`).
+3. **Enregistrer**. L'application apparaît avec le statut **Brouillon** (*Draft*). C'est normal : une application privée n'a pas besoin d'être publiée pour être autorisée.
+
+> **Application « Sandbox » ?** Une application créée en *Sandbox* ne renvoie que des réponses d'exemple fictives d'Amazon, jamais vos vraies ventes. Ses identifiants ne fonctionnent pas pour le dashboard : il faut une application **Production**. Si l'option *Production* n'est pas proposée, c'est que votre profil développeur n'est pas encore approuvé.
 
 ---
 
@@ -135,7 +137,7 @@ Toujours sur la ligne de votre application :
 >
 > ⚠️ Si vous ajoutez un rôle plus tard, vous devez **ré-autoriser** l'application (refaire l'étape 5) pour que le nouveau jeton inclue ce rôle.
 >
-> Amazon peut demander périodiquement de renouveler l'autorisation (vous êtes prévenu par e-mail / Seller Central) : refaites alors cette étape et remplacez le jeton dans `.env`.
+> Le refresh token doit être **renouvelé chaque année** (Amazon vous prévient) : refaites alors cette étape et remplacez le jeton dans `.env` ou dans les variables de la stack Portainer. Une application peut avoir au maximum 10 autorisations.
 
 ---
 
