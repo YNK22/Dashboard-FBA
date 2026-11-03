@@ -1,6 +1,7 @@
 import { getConfig, hasAmazonCredentials } from "./config";
 import { getAccessToken, spApiRequest } from "./spapi/client";
 import { listTransactions } from "./spapi/finances";
+import { fetchInventory } from "./spapi/inventory";
 
 /**
  * Vérification de la connexion à Amazon, étape par étape.
@@ -81,6 +82,16 @@ export async function checkAmazon(): Promise<CheckStep[]> {
     });
   } catch (e) {
     steps.push({ label: "Finances (rôle « Finance et comptabilité »)", ok: false, detail: (e as Error).message });
+  }
+
+  const inv = cfg.marketplaces.find((m) => m.code === cfg.inventoryMarketplace) ?? cfg.marketplaces[0];
+  if (inv) {
+    try {
+      const items = await fetchInventory(inv.id, cfg);
+      steps.push({ label: "Stock FBA (rôle « Expédition par Amazon »)", ok: true, detail: `${items.length} SKU dans l'inventaire FBA (${inv.code})` });
+    } catch (e) {
+      steps.push({ label: "Stock FBA (rôle « Expédition par Amazon »)", ok: false, detail: (e as Error).message });
+    }
   }
 
   return steps;

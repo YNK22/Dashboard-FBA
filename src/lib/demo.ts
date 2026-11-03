@@ -1,5 +1,5 @@
 import { MARKETPLACES } from "./config";
-import { getDb, kvSet } from "./db";
+import { bumpDataVersion, getDb, kvSet } from "./db";
 
 /**
  * Données de démonstration : permet de voir le dashboard fonctionner avant d'avoir
@@ -40,7 +40,10 @@ function rng(seed: number) {
 
 export function clearData() {
   const db = getDb();
-  db.exec("DELETE FROM orders; DELETE FROM order_items; DELETE FROM finance_lines; DELETE FROM fee_estimates; DELETE FROM expenses; DELETE FROM products; DELETE FROM kv;");
+  db.exec(
+    "DELETE FROM orders; DELETE FROM order_items; DELETE FROM finance_lines; DELETE FROM fee_estimates; DELETE FROM expenses; DELETE FROM products; DELETE FROM lots; DELETE FROM inbound_shipments; DELETE FROM inventory; DELETE FROM kv;",
+  );
+  bumpDataVersion();
 }
 
 export function seedDemo(days = 430, now = new Date()) {
@@ -129,7 +132,58 @@ export function seedDemo(days = 430, now = new Date()) {
     }
   })();
 
+  seedLotsAndStock(rand, now);
+  bumpDataVersion();
   kvSet("demo", "1");
   kvSet("last_sync_ok_at", now.toISOString());
   return n;
+}
+
+/** Lots d'achat (prix qui varient d'un lot à l'autre) et stock FBA fictifs. */
+function seedLotsAndStock(rand: () => number, now: Date) {
+  const db = getDb();
+  const insLot = db.prepare(
+    "INSERT INTO lots(id, sku, received_at, quantity, unit_cost, shipment_id, source, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'fba_shipment', ?)",
+  );
+  const insInv = db.prepare(
+    `INSERT INTO inventory(sku, asin, title, fulfillable, inbound_shipped, inbound_receiving, reserved, reserved_customer, reserved_transfer, unfulfillable, total, updated_at)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const sales = db.prepare(
+    `SELECT o.purchase_date AS date, oi.quantity FROM order_items oi JOIN orders o ON o.order_id = oi.order_id WHERE oi.sku = ? ORDER BY o.purchase_date`,
+  );
+  let shipmentNo = 1000;
+  db.transaction(() => {
+    PRODUCTS.forEach((p, idx) => {
+      const rows = sales.all(p.sku) as { date: string; quantity: number }[];
+      if (idx === PRODUCTS.length - 1) return; // produit sans lot ni prix : montre l'alerte
+      // Un lot toutes les ~30 unités vendues, reçu 5 jours avant la première vente qu'il couvre
+      let i = 0;
+      while (i < rows.length) {
+        const chunk = 20 + Math.floor(rand() * 25);
+        let units = 0;
+        const first = rows[i];
+        while (i < rows.length && units < chunk) units += rows[i++].quantity;
+        const id = `FBA15DEMO${shipmentNo++}`;
+        const received = new Date(new Date(first.date).getTime() - 5 * 86_400_000).toISOString();
+        const cost = Math.round(p.cogs * (0.9 + rand() * 0.2) * 100) / 100;
+        insLot.run(`${id}|${p.sku}`, p.sku, received, units, cost, id, now.toISOString());
+      }
+      // Stock actuel : un lot récent, dont certains sans coût (à compléter)
+      const v30 = rows.filter((r) => new Date(r.date).getTime() > now.getTime() - 30 * 86_400_000).reduce((a, r) => a + r.quantity, 0) / 30;
+      const profile = idx % 5; // 0 rupture, 1 à réassortir, 2 ok, 3 surstock, 4 ok
+      const fulfillable = profile === 0 ? 0 : Math.round(v30 * (profile === 1 ? 10 : profile === 3 ? 220 : 45 + rand() * 30));
+      const inbound = profile === 1 ? Math.round(v30 * 6) : profile === 0 ? 0 : rand() < 0.3 ? Math.round(v30 * 20) : 0;
+      if (fulfillable + inbound > 0) {
+        const id = `FBA15DEMO${shipmentNo++}`;
+        const received = new Date(now.getTime() - (3 + rand() * 10) * 86_400_000).toISOString();
+        insLot.run(`${id}|${p.sku}`, p.sku, received, fulfillable + inbound + 2, idx % 3 === 0 ? null : Math.round(p.cogs * 1.03 * 100) / 100, id, now.toISOString());
+      }
+      const reservedCustomer = Math.round(rand() * 3);
+      insInv.run(p.sku, p.asin, p.title, fulfillable, Math.round(inbound / 2), inbound - Math.round(inbound / 2), reservedCustomer, reservedCustomer, 0, rand() < 0.2 ? 1 : 0, fulfillable + inbound + reservedCustomer, now.toISOString());
+    });
+    // Un produit dormant : du stock mais plus aucune vente
+    insInv.run("OLD-SKU-2024", "B07OLDSKU1", "Coffret ancien modèle (plus vendu)", 14, 0, 0, 0, 0, 0, 0, 14, now.toISOString());
+    insLot.run("FBA15OLD|OLD-SKU-2024", "OLD-SKU-2024", new Date(now.getTime() - 200 * 86_400_000).toISOString(), 20, 18.5, "FBA15OLD", now.toISOString());
+  })();
 }

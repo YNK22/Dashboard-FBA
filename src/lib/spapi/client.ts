@@ -63,6 +63,9 @@ export const RATE_LIMITS: Record<string, { rate: number; burst: number }> = {
   listTransactions: { rate: 0.5, burst: 10 },
   getMyFeesEstimates: { rate: 0.5, burst: 1 },
   getMarketplaceParticipations: { rate: 0.016, burst: 15 },
+  getInventorySummaries: { rate: 2, burst: 2 },
+  getShipments: { rate: 2, burst: 30 },
+  getShipmentItemsByShipmentId: { rate: 2, burst: 30 },
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -1,5 +1,6 @@
 import { getConfig, hasAmazonCredentials } from "./config";
-import { getDb, kvGet, kvSet } from "./db";
+import { bumpDataVersion, getDb, kvGet, kvSet } from "./db";
+import { fetchInventory, fetchShipmentItems, fetchShipments } from "./spapi/inventory";
 import { parseOrder, searchOrders, type SearchParams } from "./spapi/orders";
 import { listTransactions, parseTransaction } from "./spapi/finances";
 import { estimateFees } from "./spapi/fees";
@@ -9,6 +10,8 @@ import { estimateFees } from "./spapi/fees";
  *  1. Commandes (Orders API) : nouvelles commandes + changements de statut.
  *  2. Transactions financières (Finances API) : frais réels, remboursements, frais divers.
  *  3. Estimations de frais (Product Fees API) pour les produits sans historique.
+ *  4. Stock FBA (FBA Inventory API).
+ *  5. Envois FBA (Fulfillment Inbound API) -> lots d'achat pour le coût FIFO.
  */
 
 export interface SyncResult {
@@ -16,6 +19,9 @@ export interface SyncResult {
   orders: number;
   financeLines: number;
   feeEstimates: number;
+  inventorySkus: number;
+  lots: number;
+  warnings: string[];
   startedAt: string;
   finishedAt: string;
   error?: string;
@@ -38,7 +44,17 @@ export function runSync(opts: { days?: number; log?: (msg: string) => void } = {
 async function doSync({ days, log = console.log }: { days?: number; log?: (msg: string) => void }): Promise<SyncResult> {
   const cfg = getConfig();
   const startedAt = new Date().toISOString();
-  const result: SyncResult = { ok: false, orders: 0, financeLines: 0, feeEstimates: 0, startedAt, finishedAt: startedAt };
+  const result: SyncResult = {
+    ok: false,
+    orders: 0,
+    financeLines: 0,
+    feeEstimates: 0,
+    inventorySkus: 0,
+    lots: 0,
+    warnings: [],
+    startedAt,
+    finishedAt: startedAt,
+  };
   if (!hasAmazonCredentials(cfg)) {
     result.error = "Identifiants SP-API absents : renseignez SPAPI_CLIENT_ID, SPAPI_CLIENT_SECRET et SPAPI_REFRESH_TOKEN dans .env";
     return result;
@@ -156,12 +172,104 @@ async function doSync({ days, log = console.log }: { days?: number; log?: (msg: 
       }
     }
 
+    /* ---------- 4. Stock FBA ---------- */
+    const invMkt = cfg.marketplaces.find((m) => m.code === cfg.inventoryMarketplace) ?? cfg.marketplaces[0];
+    if (invMkt) {
+      try {
+        const summaries = await fetchInventory(invMkt.id, cfg);
+        const now = new Date().toISOString();
+        const upsertInv = db.prepare(`
+          INSERT OR REPLACE INTO inventory(sku, asin, fnsku, title, condition, fulfillable, inbound_working, inbound_shipped, inbound_receiving,
+            reserved, reserved_customer, reserved_transfer, reserved_processing, unfulfillable, researching, total, updated_at)
+          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        db.transaction(() => {
+          db.prepare("DELETE FROM inventory").run();
+          for (const it of summaries) {
+            if (!it.sellerSku) continue;
+            const d = it.inventoryDetails ?? {};
+            upsertInv.run(
+              it.sellerSku,
+              it.asin ?? null,
+              it.fnSku ?? null,
+              it.productName ?? null,
+              it.condition ?? null,
+              d.fulfillableQuantity ?? 0,
+              d.inboundWorkingQuantity ?? 0,
+              d.inboundShippedQuantity ?? 0,
+              d.inboundReceivingQuantity ?? 0,
+              d.reservedQuantity?.totalReservedQuantity ?? 0,
+              d.reservedQuantity?.pendingCustomerOrderQuantity ?? 0,
+              d.reservedQuantity?.pendingTransshipmentQuantity ?? 0,
+              d.reservedQuantity?.fcProcessingQuantity ?? 0,
+              d.unfulfillableQuantity?.totalUnfulfillableQuantity ?? 0,
+              d.researchingQuantity?.totalResearchingQuantity ?? 0,
+              it.totalQuantity ?? 0,
+              now,
+            );
+            if (it.asin || it.productName) upsertProduct.run(it.sellerSku, it.asin ?? null, it.productName ?? null);
+          }
+        })();
+        result.inventorySkus = summaries.length;
+        log(`[sync] stock FBA : ${summaries.length} SKU`);
+      } catch (e) {
+        result.warnings.push(`Stock FBA : ${(e as Error).message}`);
+        log(`[sync] stock FBA ignoré : ${(e as Error).message}`);
+      }
+
+      /* ---------- 5. Envois FBA -> lots d'achat ---------- */
+      try {
+        const shipCursor = kvGet("shipments_cursor");
+        const since = shipCursor && !days ? new Date(new Date(shipCursor).getTime() - 86_400_000) : new Date(Date.now() - Math.max(initialDays, 90) * 86_400_000);
+        const syncStart = new Date();
+        const shipments = await fetchShipments(invMkt.id, since, cfg);
+        const nowIso = syncStart.toISOString();
+        const getShip = db.prepare("SELECT * FROM inbound_shipments WHERE shipment_id = ?");
+        const upsertShip = db.prepare(`
+          INSERT INTO inbound_shipments(shipment_id, name, status, first_seen_at, received_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)
+          ON CONFLICT(shipment_id) DO UPDATE SET name = excluded.name, status = excluded.status,
+            received_at = COALESCE(inbound_shipments.received_at, excluded.received_at), updated_at = excluded.updated_at`);
+        const upsertLot = db.prepare(`
+          INSERT INTO lots(id, sku, received_at, quantity, unit_cost, shipment_id, source, updated_at)
+          VALUES(?, ?, ?, ?, NULL, ?, 'fba_shipment', ?)
+          ON CONFLICT(id) DO UPDATE SET quantity = excluded.quantity, updated_at = excluded.updated_at,
+            received_at = CASE WHEN lots.source = 'fba_shipment' THEN excluded.received_at ELSE lots.received_at END`);
+        const deleteLot = db.prepare("DELETE FROM lots WHERE id = ? AND source = 'fba_shipment' AND unit_cost IS NULL");
+
+        for (const sh of shipments) {
+          if (!sh.ShipmentId) continue;
+          const prev = getShip.get(sh.ShipmentId) as { first_seen_at: string; received_at: string | null } | undefined;
+          const received = ["RECEIVING", "CLOSED", "CHECKED_IN"].includes(sh.ShipmentStatus ?? "") ? nowIso : null;
+          upsertShip.run(sh.ShipmentId, sh.ShipmentName ?? null, sh.ShipmentStatus ?? null, prev?.first_seen_at ?? nowIso, received, nowIso);
+          const lotDate = shipmentDate(sh.ShipmentName) ?? prev?.received_at ?? received ?? prev?.first_seen_at ?? nowIso;
+          const items = await fetchShipmentItems(sh.ShipmentId, invMkt.id, cfg);
+          db.transaction(() => {
+            for (const it of items) {
+              if (!it.SellerSKU) continue;
+              const id = `${sh.ShipmentId}|${it.SellerSKU}`;
+              const qty = sh.ShipmentStatus === "CLOSED" ? (it.QuantityReceived ?? 0) : Math.max(it.QuantityShipped ?? 0, it.QuantityReceived ?? 0);
+              if (qty <= 0 || ["CANCELLED", "DELETED"].includes(sh.ShipmentStatus ?? "")) deleteLot.run(id);
+              else {
+                upsertLot.run(id, it.SellerSKU, lotDate, qty, sh.ShipmentId, nowIso);
+                result.lots++;
+              }
+            }
+          })();
+        }
+        kvSet("shipments_cursor", nowIso);
+        log(`[sync] envois FBA : ${shipments.length} envoi(s), ${result.lots} lot(s) mis à jour`);
+      } catch (e) {
+        result.warnings.push(`Envois FBA : ${(e as Error).message}`);
+        log(`[sync] envois FBA ignorés : ${(e as Error).message}`);
+      }
+    }
+
     result.ok = true;
   } catch (e) {
     result.error = (e as Error).message;
     log(`[sync] ERREUR : ${result.error}`);
   } finally {
     result.finishedAt = new Date().toISOString();
+    bumpDataVersion();
     kvSet("sync_running_since", "");
     kvSet("last_sync", JSON.stringify(result));
     if (result.ok) kvSet("last_sync_ok_at", result.finishedAt);
@@ -173,4 +281,17 @@ async function doSync({ days, log = console.log }: { days?: number; log?: (msg: 
 export function lastSync(): { last?: SyncResult; lastOkAt?: string | null } {
   const raw = kvGet("last_sync");
   return { last: raw ? (JSON.parse(raw) as SyncResult) : undefined, lastOkAt: kvGet("last_sync_ok_at") };
+}
+
+/**
+ * Date de création d'un envoi, déduite de son nom par défaut Amazon,
+ * ex. « FBA STA (03/11/2026 14:23)-CDG7 » (jour/mois/année sur les marketplaces européennes).
+ */
+export function shipmentDate(name: string | null | undefined): string | null {
+  const m = name?.match(/(\d{1,2})[/.](\d{1,2})[/.](\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (!m) return null;
+  const [, d, mo, y, h, mi] = m.map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const date = new Date(Date.UTC(y, mo - 1, d, h || 0, mi || 0));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }

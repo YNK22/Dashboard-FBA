@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getDb } from "@/lib/db";
+import { bumpDataVersion, getDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -34,5 +34,6 @@ export async function PUT(req: NextRequest) {
       stmt.run(r.sku, cogs, Number(r.extra_cost) || 0, now);
     }
   })();
+  bumpDataVersion();
   return NextResponse.json({ ok: true, updated: body.length });
 }

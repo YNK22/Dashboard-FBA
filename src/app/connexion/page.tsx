@@ -17,7 +17,18 @@ interface Settings {
   sync: {
     running: boolean;
     lastOkAt?: string | null;
-    last?: { ok: boolean; orders: number; financeLines: number; feeEstimates: number; startedAt: string; finishedAt: string; error?: string };
+    last?: {
+      ok: boolean;
+      orders: number;
+      financeLines: number;
+      feeEstimates: number;
+      inventorySkus?: number;
+      lots?: number;
+      warnings?: string[];
+      startedAt: string;
+      finishedAt: string;
+      error?: string;
+    };
   };
 }
 
@@ -164,9 +175,15 @@ export default function ConnexionPage() {
                 <span>Dernier passage</span>
                 <span>
                   {dt(s.sync.last.finishedAt)} · {s.sync.last.ok ? "✅" : "❌"} {s.sync.last.orders} commandes, {s.sync.last.financeLines} lignes financières
+                  {s.sync.last.inventorySkus !== undefined ? `, ${s.sync.last.inventorySkus} SKU en stock, ${s.sync.last.lots ?? 0} lots` : ""}
                 </span>
               </div>
             )}
+            {s.sync.last?.warnings?.map((w) => (
+              <div key={w} className="note warn-text">
+                ⚠ {w}
+              </div>
+            ))}
             {s.sync.last?.error && <div className="note warn-text">{s.sync.last.error}</div>}
           </div>
         )}

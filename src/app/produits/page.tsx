@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fmtEur, fmtInt } from "@/components/format";
+import LotsPanel from "@/components/LotsPanel";
 
 interface Row {
   sku: string;
@@ -66,21 +67,25 @@ export default function ProduitsPage() {
     <>
       <div className="page-head">
         <div>
-          <h1>Produits & coûts</h1>
+          <h1>Coûts d&apos;achat</h1>
           <div className="page-sub">
-            Prix d&apos;achat unitaire {""}
-            <strong>HT</strong> (TTC si vous n&apos;êtes pas assujetti à la TVA) + coûts annexes par unité (prep, envoi vers Amazon…).
+            Montants <strong>HT</strong> (TTC si vous n&apos;êtes pas assujetti à la TVA). Le coût de chaque vente vient du lot consommé (FIFO), sinon du prix
+            par défaut du produit.
           </div>
         </div>
-        <button className="btn btn-primary" onClick={save} disabled={Object.keys(edits).length === 0}>
-          Enregistrer {Object.keys(edits).length > 0 ? `(${Object.keys(edits).length})` : ""}
-        </button>
       </div>
 
-      {missing > 0 && <div className="banner">⚠ {missing} produit(s) sans prix d&apos;achat : leur bénéfice et leur ROI sont surestimés.</div>}
-      {msg && <div className="banner">{msg}</div>}
+      <LotsPanel />
 
       <section className="panel">
+        <div className="panel-head">
+          <h2 className="panel-title">Prix d&apos;achat par défaut (ventes non couvertes par un lot)</h2>
+          <button className="btn btn-primary" onClick={save} disabled={Object.keys(edits).length === 0}>
+            Enregistrer {Object.keys(edits).length > 0 ? `(${Object.keys(edits).length})` : ""}
+          </button>
+        </div>
+        {missing > 0 && <div className="banner">ℹ {missing} produit(s) sans prix par défaut : seules leurs ventes couvertes par un lot ont un coût.</div>}
+        {msg && <div className="banner">{msg}</div>}
         <div className="panel-head">
           <input className="cell" style={{ width: 260, textAlign: "left" }} placeholder="Rechercher SKU, ASIN, titre…" value={filter} onChange={(e) => setFilter(e.target.value)} />
           <label className="btn" style={{ cursor: "pointer" }}>

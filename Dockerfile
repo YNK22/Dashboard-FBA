@@ -2,6 +2,10 @@
 
 # ---- Build ----
 FROM node:22-bookworm-slim AS build
+# Outils de compilation pour le module natif better-sqlite3 (uniquement à l'étape de build)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

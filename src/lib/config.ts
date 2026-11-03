@@ -81,6 +81,11 @@ export function getConfig() {
     syncIntervalMinutes: envNumber("SYNC_INTERVAL_MINUTES", 15),
     syncInitialDays: envNumber("SYNC_INITIAL_DAYS", 60),
     dashboardPassword: env("DASHBOARD_PASSWORD"),
+    // Stock : marketplace interrogée pour l'inventaire FBA (stock Pan-EU / EFN mutualisé)
+    inventoryMarketplace: env("INVENTORY_MARKETPLACE", codes[0] ?? "FR"),
+    reorderDays: envNumber("REORDER_DAYS", 30), // alerte « à réassortir » sous ce nombre de jours de stock
+    targetStockDays: envNumber("TARGET_STOCK_DAYS", 60), // couverture visée pour la quantité à commander
+    overstockDays: envNumber("OVERSTOCK_DAYS", 180),
   };
 }
 

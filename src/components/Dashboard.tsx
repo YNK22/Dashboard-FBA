@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Card, ChartPoint, ProductRow } from "@/lib/queries";
+import type { Card, ChartPoint, CountryRow, ProductRow } from "@/lib/queries";
 import BarChart from "./BarChart";
 import PeriodCard from "./PeriodCard";
 import { fmtEur, fmtInt, fmtPct, signClass } from "./format";
@@ -13,7 +13,7 @@ interface DashboardData {
   connected: boolean;
   vatRegistered: boolean;
   marketplaces: string[];
-  sync: { running: boolean; lastOkAt: string | null; lastError: string | null };
+  sync: { running: boolean; lastOkAt: string | null; lastError: string | null; warnings: string[] };
 }
 
 const TAB_LABELS: Record<Card["key"], string> = {
@@ -34,17 +34,18 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Card["key"]>("today");
+  const [mkt, setMkt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/dashboard", { cache: "no-store" });
+      const res = await fetch(`/api/dashboard${mkt ? `?mkt=${mkt}` : ""}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
       setError(null);
     } catch (e) {
       setError(`Impossible de charger les données (${(e as Error).message})`);
     }
-  }, []);
+  }, [mkt]);
 
   useEffect(() => {
     load();
@@ -99,6 +100,18 @@ export default function Dashboard() {
       )}
       {(error || data?.sync.lastError) && <div className="banner error">⚠ {error ?? `Dernière synchro en erreur : ${data?.sync.lastError}`}</div>}
 
+      {data?.sync.warnings?.length ? <div className="banner">⚠ {data.sync.warnings.join(" · ")}</div> : null}
+
+      {data && data.marketplaces.length > 1 && (
+        <div className="chips" role="group" aria-label="Marketplace">
+          {[null, ...data.marketplaces].map((m) => (
+            <button key={m ?? "all"} className="chip" aria-pressed={mkt === m} onClick={() => setMkt(m)}>
+              {m ?? "Tous les pays"}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="segmented mobile-tabs" role="tablist">
         {(Object.keys(TAB_LABELS) as Card["key"][]).map((k) => (
           <button key={k} aria-pressed={tab === k} onClick={() => setTab(k)}>
@@ -113,15 +126,15 @@ export default function Dashboard() {
           : !error && <div className="muted">Chargement…</div>}
       </div>
 
-      <ChartPanel refreshKey={data?.generatedAt} />
-      <ProductsPanel refreshKey={data?.generatedAt} />
+      <ChartPanel refreshKey={data?.generatedAt} mkt={mkt} />
+      <ProductsPanel refreshKey={data?.generatedAt} mkt={mkt} />
     </>
   );
 }
 
 /* ---------------- Graphique Mois / Année ---------------- */
 
-function ChartPanel({ refreshKey }: { refreshKey?: string }) {
+function ChartPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | null }) {
   const now = new Date();
   const [mode, setMode] = useState<"month" | "year">("month");
   const [year, setYear] = useState(now.getFullYear());
@@ -130,12 +143,12 @@ function ChartPanel({ refreshKey }: { refreshKey?: string }) {
   const [points, setPoints] = useState<ChartPoint[]>([]);
 
   useEffect(() => {
-    const qs = mode === "month" ? `year=${year}&month=${month}` : `year=${year}`;
+    const qs = (mode === "month" ? `year=${year}&month=${month}` : `year=${year}`) + (mkt ? `&mkt=${mkt}` : "");
     fetch(`/api/chart?${qs}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => setPoints(j.points ?? []))
       .catch(() => setPoints([]));
-  }, [mode, year, month, refreshKey]);
+  }, [mode, year, month, refreshKey, mkt]);
 
   const shift = (delta: number) => {
     if (mode === "year") return setYear((y) => y + delta);
@@ -225,22 +238,40 @@ function rangeFor(key: RangeKey): { from: string; to: string } {
   }
 }
 
-function ProductsPanel({ refreshKey }: { refreshKey?: string }) {
+function ProductsPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | null }) {
   const [range, setRange] = useState<RangeKey>("month");
+  const [view, setView] = useState<"products" | "countries">("products");
   const [rows, setRows] = useState<ProductRow[]>([]);
+  const [countries, setCountries] = useState<CountryRow[]>([]);
 
   useEffect(() => {
     const { from, to } = rangeFor(range);
-    fetch(`/api/products?from=${from}&to=${to}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => setRows(j.rows ?? []))
-      .catch(() => setRows([]));
-  }, [range, refreshKey]);
+    if (view === "products") {
+      fetch(`/api/products?from=${from}&to=${to}${mkt ? `&mkt=${mkt}` : ""}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j) => setRows(j.rows ?? []))
+        .catch(() => setRows([]));
+    } else {
+      fetch(`/api/countries?from=${from}&to=${to}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j) => setCountries(j.rows ?? []))
+        .catch(() => setCountries([]));
+    }
+  }, [range, refreshKey, mkt, view]);
+
+  const { from, to } = rangeFor(range);
 
   return (
     <section className="panel">
       <div className="panel-head">
-        <h2 className="panel-title">Rentabilité par produit</h2>
+        <div className="segmented">
+          <button aria-pressed={view === "products"} onClick={() => setView("products")}>
+            Par produit
+          </button>
+          <button aria-pressed={view === "countries"} onClick={() => setView("countries")}>
+            Par pays
+          </button>
+        </div>
         <select className="btn" value={range} onChange={(e) => setRange(e.target.value as RangeKey)} aria-label="Période">
           <option value="today">Aujourd&apos;hui</option>
           <option value="yesterday">Hier</option>
@@ -251,6 +282,9 @@ function ProductsPanel({ refreshKey }: { refreshKey?: string }) {
           <option value="90d">90 derniers jours</option>
         </select>
       </div>
+      {view === "countries" ? (
+        <CountriesTable rows={countries} />
+      ) : (
       <div className="table-wrap">
         <table className="num">
           <thead>
@@ -298,6 +332,64 @@ function ProductsPanel({ refreshKey }: { refreshKey?: string }) {
           </tbody>
         </table>
       </div>
+      )}
+      <div className="note" style={{ marginTop: 10 }}>
+        <a href={`/commandes?from=${from}&to=${to}${mkt ? `&mkt=${mkt}` : ""}`}>Voir le détail des commandes de la période ›</a>
+      </div>
     </section>
+  );
+}
+
+function CountriesTable({ rows }: { rows: CountryRow[] }) {
+  const total = rows.reduce((s, r) => s + r.summary.salesTtc, 0);
+  return (
+    <div className="table-wrap">
+      <table className="num">
+        <thead>
+          <tr>
+            <th>Pays</th>
+            <th>Cmd / unités</th>
+            <th>CA TTC</th>
+            <th>Part</th>
+            <th>CA HT</th>
+            <th>Frais Amazon</th>
+            <th>Rembours.</th>
+            <th>Bénéfice net</th>
+            <th>Marge</th>
+            <th>ROI</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={10} className="muted">
+                Aucune vente sur la période.
+              </td>
+            </tr>
+          )}
+          {rows.map((r) => (
+            <tr key={r.code}>
+              <td>
+                <strong>{r.code}</strong> <span className="sku">{r.name}</span>
+              </td>
+              <td>
+                {fmtInt(r.summary.orders)} / {fmtInt(r.summary.units)}
+              </td>
+              <td>{fmtEur(r.summary.salesTtc)}</td>
+              <td>{total > 0 ? fmtPct(r.summary.salesTtc / total) : "—"}</td>
+              <td>{fmtEur(r.summary.salesHt)}</td>
+              <td>{fmtEur(r.summary.amazonFees)}</td>
+              <td>{fmtInt(r.summary.refunds)}</td>
+              <td className={signClass(r.summary.netProfit)}>{fmtEur(r.summary.netProfit)}</td>
+              <td>{fmtPct(r.summary.margin)}</td>
+              <td>{fmtPct(r.summary.roi)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="note" style={{ marginTop: 8 }}>
+        Les coûts non rattachés à un pays (dépenses saisies) ne sont comptés que dans la vue « Tous les pays ».
+      </div>
+    </div>
   );
 }

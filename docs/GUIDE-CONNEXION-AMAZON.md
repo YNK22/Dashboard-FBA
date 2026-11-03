@@ -25,6 +25,8 @@ Vous allez récupérer **3 identifiants** :
          • Orders API v2026-01-01   → commandes, prix, statut
          • Finances API v2024-06-19 → frais réels, remboursements, frais divers
          • Product Fees API v0      → estimation des frais des commandes pas encore réglées
+         • FBA Inventory API v1     → stock FBA
+         • Fulfillment Inbound v0   → envois FBA (lots d'achat FIFO)
          • Sellers API v1           → test de connexion
 ```
 
@@ -63,12 +65,13 @@ Nom de l'organisation (votre société), site web (votre site ou votre boutique 
 
 ### 2.3 Accès aux données : les rôles
 
-Cochez **uniquement** ces rôles :
+Cochez **uniquement** ces rôles. Si votre profil est déjà approuvé sans l'un d'eux, ajoutez-le depuis le profil développeur, puis ré-autorisez l'application (étape 5). Sans le rôle *Expédition par Amazon*, le dashboard fonctionne mais sans les pages Stock ni la création automatique des lots.
 
 | Rôle (FR) | Rôle (EN) | Utilisé pour |
 |---|---|---|
 | ✅ **Finance et comptabilité** | *Finance and Accounting* | Frais Amazon réels, remboursements, abonnement, stockage |
 | ✅ **Suivi des stocks et des commandes** | *Inventory and Order Tracking* | Commandes, prix de vente, statuts |
+| ✅ **Expédition par Amazon** | *Amazon Fulfillment* | Stock FBA et envois FBA (création automatique des lots d'achat) |
 | ✅ **Tarification** | *Pricing* | Estimation des frais (API Product Fees) |
 
 **Ne cochez pas** les rôles « restreints » (adresses des acheteurs, informations fiscales…) : le dashboard n'en a pas besoin, et ils déclenchent un audit de sécurité beaucoup plus long.
@@ -229,11 +232,15 @@ Ouvrez <http://localhost:3000>. Tant que le serveur tourne, il se synchronise to
 
 ---
 
-## Étape 9 — Saisir vos prix d'achat
+## Étape 9 — Saisir vos coûts d'achat
 
-Sans prix d'achat, le dashboard ne peut pas calculer votre bénéfice ni votre ROI. Les produits sans prix sont signalés par **⚠**.
+Sans coût d'achat, le dashboard ne peut pas calculer votre bénéfice ni votre ROI. Les produits sans coût sont signalés par **⚠**.
 
-- Page **Produits** : saisissez le prix d'achat unitaire **HT** (TTC si vous n'êtes pas assujetti) et, si besoin, un coût annexe par unité (prep center, transport jusqu'à l'entrepôt Amazon, étiquetage…).
+Le coût est calculé en **FIFO par lots**, comme dans Scorasin : chaque vente consomme le lot le plus ancien du SKU.
+
+- **Lots** (page **Coûts**, en haut) : chaque envoi FBA crée automatiquement un lot par SKU (quantité, date). Filtrez sur **Coût à compléter** et saisissez le coût unitaire HT tout compris (achat + prep + transport).
+- **Import de lots en CSV** : bouton **⬆ Importer des lots (CSV)**, colonnes `sku;date;quantite;cout_unitaire_ht;envoi_fba`. Les colonnes d'un export Scorasin (`merchant_sku`, `received_at`, `quantity_received`, `unit_cog_ht`, `amazon_shipment_id`, `included_in_fifo`) sont reconnues telles quelles. Avec le n° d'envoi FBA, le coût vient compléter le lot créé automatiquement, sans doublon.
+- **Prix par défaut** (page **Coûts**, en bas) : utilisé pour les ventes qu'aucun lot ne couvre, par exemple les ventes antérieures à vos premiers lots. saisissez le prix d'achat unitaire **HT** (TTC si vous n'êtes pas assujetti) et, si besoin, un coût annexe par unité (prep center, transport jusqu'à l'entrepôt Amazon, étiquetage…).
 - Ou en masse depuis un tableur exporté en CSV, avec le bouton **⬆ Importer un CSV** de la page Produits (ou en ligne de commande) :
 
   ```csv

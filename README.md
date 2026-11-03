@@ -20,9 +20,12 @@ Toutes marketplaces européennes, en temps quasi réel, utilisable sur ordinateu
 
 Plus :
 
+- un **filtre par pays** (FR, DE, IT…) qui s'applique à tout le dashboard
 - un **graphique** du CA (ou du bénéfice) par jour du mois ou par mois de l'année, avec navigation ‹ ›
-- la **rentabilité par produit** sur la période de votre choix
-- une page **Produits & coûts** pour saisir vos prix d'achat (ou import CSV)
+- la **rentabilité par produit** et **par pays** sur la période de votre choix
+- une page **Commandes** : chaque commande avec son CA, ses frais, son coût d'achat et son bénéfice (recherche, filtre « à perte »)
+- une page **Stock & réassort** : stock FBA, valeur du stock au coût d'achat, jours de stock restants, date de rupture estimée, quantité à commander, alertes rupture / réassort / surstock / dormant
+- une page **Coûts** : **lots d'achat en FIFO**, créés automatiquement depuis vos envois FBA (vous complétez le coût) ou importés en CSV, y compris depuis un export Scorasin ; plus un prix par défaut par produit
 - une page **Dépenses** pour vos coûts hors Amazon (publicité, logiciels, prep center…)
 - une page **Amazon** : test de la connexion, état de la synchro, ré-import de l'historique, sans ligne de commande
 
@@ -59,7 +62,7 @@ En résumé :
 | **TVA** | TVA incluse dans le CA, au taux du pays de la marketplace (FR 20 %, DE 19 %, IT 22 %, ES 21 %…) ou montant de taxe fourni par Amazon |
 | **CA HT** | CA TTC − TVA |
 | **Frais Amazon** | Commission + frais d'expédition FBA + autres frais par commande. **Réels** (API Finances) dès qu'Amazon a réglé la commande, sinon **estimés** |
-| **Coût d'achat** | Unités × (prix d'achat + coût annexe par unité) |
+| **Coût d'achat** | **FIFO** : chaque vente consomme le lot le plus ancien de son SKU déjà en stock à la date de la vente (coût unitaire HT tout compris). À défaut de lot : prix par défaut du produit (+ coût annexe) |
 | **Bénéfice brut** | CA HT − frais Amazon − coût d'achat |
 | **Remboursements** | Montant remboursé HT − frais rendus par Amazon + frais de remboursement − coût d'achat récupéré si l'article revient en stock (`RETURN_RESTOCK_RATE`) — comptés à la date du remboursement |
 | **Coûts divers** | Frais Amazon hors commande (abonnement, stockage, frais d'envoi en entrepôt…) + vos dépenses saisies |
@@ -111,6 +114,9 @@ src/
     spapi/fees.ts       Product Fees API v0 (getMyFeesEstimates) → estimation des frais
     sync.ts             Synchronisation incrémentale vers SQLite
     metrics.ts          Calculs (CA, bénéfice, marge, ROI, prévision) — fonctions pures testées
+    fifo.ts             Coût d'achat FIFO par lots
+    stock.ts            Stock, jours de couverture, réassort
+    spapi/inventory.ts  FBA Inventory API v1 (stock) + Fulfillment Inbound API v0 (envois FBA -> lots)
     queries.ts          Lecture de la base, cartes du dashboard, graphiques, tableau produits
     db.ts               Schéma SQLite
   app/                  Pages Next.js (dashboard, produits, dépenses) et routes /api/*
@@ -126,7 +132,8 @@ Stack : Next.js 16, React 19, TypeScript, SQLite (better-sqlite3). Aucune donné
 
 ## Limites connues
 
-- Le prix d'achat est unique par SKU : le modifier recalcule aussi l'historique.
+- Les lots créés depuis les envois FBA historiques sont datés d'après le nom de l'envoi (« FBA STA (jj/mm/aaaa…) »), sinon à la date de la première synchro : importez vos lots avec leur vraie date (CSV) pour un FIFO exact sur l'historique.
+- Le stock est lu sur une seule marketplace (`INVENTORY_MARKETPLACE`), ce qui correspond au stock européen mutualisé (Pan-EU / EFN).
 - La TVA est calculée au taux du pays de la marketplace. Les ventes B2B en autoliquidation et les expéditions vers un autre pays que celui de la marketplace (Pan-EU, OSS) peuvent légèrement différer de votre déclaration de TVA.
 - Les devises hors euro (SEK, PLN, GBP) sont converties avec des taux fixes (`FX_RATES`), à ajuster de temps en temps.
 - Les dépenses publicitaires ne sont pas récupérées automatiquement (l'API Amazon Ads est séparée) : saisissez-les dans **Dépenses**.

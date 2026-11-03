@@ -87,6 +87,51 @@ CREATE TABLE IF NOT EXISTS fee_estimates (
   PRIMARY KEY (sku, marketplace_id)
 );
 
+-- Lots d'achat (FIFO) : chaque vente consomme les lots les plus anciens du SKU
+CREATE TABLE IF NOT EXISTS lots (
+  id           TEXT PRIMARY KEY,        -- "<envoi FBA>|<sku>" ou identifiant généré
+  sku          TEXT NOT NULL,
+  received_at  TEXT NOT NULL,           -- ISO, date d'entrée en stock (ordre FIFO)
+  quantity     INTEGER NOT NULL,
+  unit_cost    REAL,                    -- coût unitaire HT tout compris (achat + prep + transport) ; NULL = à saisir
+  shipment_id  TEXT,                    -- envoi FBA d'origine
+  source       TEXT NOT NULL,           -- fba_shipment | csv | manual
+  note         TEXT,
+  updated_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_lots_sku ON lots(sku, received_at);
+
+-- Envois FBA (Fulfillment Inbound API) : servent à créer les lots automatiquement
+CREATE TABLE IF NOT EXISTS inbound_shipments (
+  shipment_id   TEXT PRIMARY KEY,
+  name          TEXT,
+  status        TEXT,
+  first_seen_at TEXT,
+  received_at   TEXT,                  -- 1re fois vu en réception / clôturé
+  updated_at    TEXT
+);
+
+-- Dernier état du stock FBA (FBA Inventory API)
+CREATE TABLE IF NOT EXISTS inventory (
+  sku             TEXT PRIMARY KEY,
+  asin            TEXT,
+  fnsku           TEXT,
+  title           TEXT,
+  condition       TEXT,
+  fulfillable     INTEGER DEFAULT 0,
+  inbound_working INTEGER DEFAULT 0,
+  inbound_shipped INTEGER DEFAULT 0,
+  inbound_receiving INTEGER DEFAULT 0,
+  reserved        INTEGER DEFAULT 0,
+  reserved_customer INTEGER DEFAULT 0,
+  reserved_transfer INTEGER DEFAULT 0,
+  reserved_processing INTEGER DEFAULT 0,
+  unfulfillable   INTEGER DEFAULT 0,
+  researching     INTEGER DEFAULT 0,
+  total           INTEGER DEFAULT 0,
+  updated_at      TEXT
+);
+
 CREATE TABLE IF NOT EXISTS kv (
   key   TEXT PRIMARY KEY,
   value TEXT
@@ -108,6 +153,15 @@ export function getDb(): Database.Database {
   db.exec(SCHEMA);
   globalThis.__fbaDb = db;
   return db;
+}
+
+/** Incrémenté à chaque écriture de données : invalide les caches de calcul (FIFO...). */
+let version = 0;
+export function bumpDataVersion(): void {
+  version++;
+}
+export function dataVersion(): number {
+  return version;
 }
 
 export function kvGet(key: string): string | null {

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { chartSeries } from "@/lib/queries";
+import { readScope } from "@/lib/range";
 
 export const dynamic = "force-dynamic";
 
@@ -11,5 +12,5 @@ export function GET(req: NextRequest) {
   if (!year || (month !== undefined && (month < 1 || month > 12))) {
     return NextResponse.json({ error: "Paramètres year/month invalides" }, { status: 400 });
   }
-  return NextResponse.json({ points: chartSeries({ year, month }) });
+  return NextResponse.json({ points: chartSeries({ year, month }, new Date(), readScope(req)) });
 }

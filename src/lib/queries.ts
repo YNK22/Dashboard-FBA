@@ -1,5 +1,6 @@
 import { getConfig, vatRateFor, type AppConfig } from "./config";
 import { getDb } from "./db";
+import { currentUnitCost, loadFifo } from "./fifo";
 import {
   computeSummary,
   estimateLineFees,
@@ -32,6 +33,15 @@ import {
 /* ---------------------------------------------------------------------------
  * Chargement des données depuis SQLite
  * ------------------------------------------------------------------------- */
+
+/** Configuration + filtre optionnel sur une marketplace (ID Amazon). */
+export type Scope = AppConfig & { mkt?: string | null };
+
+/** Applique le filtre marketplace (code pays "FR", "DE"...) à la configuration. */
+export function withMarketplace(cfg: AppConfig, code: string | null | undefined): Scope {
+  const m = code ? cfg.marketplaces.find((x) => x.code === code.toUpperCase()) : undefined;
+  return { ...cfg, mkt: m?.id ?? null };
+}
 
 interface ItemRow {
   order_item_id: string;
@@ -109,7 +119,7 @@ function allocateActualFees(items: ItemRow[], finLines: FinRow[]): Map<string, n
   return out;
 }
 
-function loadItems(from: string, to: string): ItemRow[] {
+function loadItems(from: string, to: string, mkt: string | null = null): ItemRow[] {
   return getDb()
     .prepare(
       `SELECT oi.order_item_id, oi.order_id, o.purchase_date, o.status, o.marketplace_id, oi.sku, oi.asin,
@@ -118,9 +128,10 @@ function loadItems(from: string, to: string): ItemRow[] {
        FROM order_items oi
        JOIN orders o ON o.order_id = oi.order_id
        LEFT JOIN products p ON p.sku = oi.sku
-       WHERE o.purchase_date >= ? AND o.purchase_date < ? AND o.status != 'CANCELLED' AND oi.quantity > 0`,
+       WHERE o.purchase_date >= ? AND o.purchase_date < ? AND o.status != 'CANCELLED' AND oi.quantity > 0
+         AND (? IS NULL OR o.marketplace_id = ?)`,
     )
-    .all(from, to) as ItemRow[];
+    .all(from, to, mkt, mkt) as ItemRow[];
 }
 
 function loadShipmentFinance(orderIds: string[]): FinRow[] {
@@ -188,8 +199,9 @@ function feeHistory(cfg: AppConfig): { map: Map<string, FeeHistory>; prices: Map
   return historyCache;
 }
 
-export function loadSales(range: Range, cfg: AppConfig = getConfig()): SaleLine[] {
-  const items = loadItems(range.from.toISOString(), range.to.toISOString());
+export function loadSales(range: Range, cfg: Scope = getConfig()): SaleLine[] {
+  const items = loadItems(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null);
+  const fifo = loadFifo();
   const fin = loadShipmentFinance([...new Set(items.map((i) => i.order_id))]);
   const actual = allocateActualFees(items, fin);
   const { map: history, prices } = feeHistory(cfg);
@@ -229,20 +241,22 @@ export function loadSales(range: Range, cfg: AppConfig = getConfig()): SaleLine[
       vat,
       fees,
       feesEstimated: actualFees === undefined,
-      cogsUnit: it.cogs === null || it.cogs === undefined ? null : it.cogs + (it.extra_cost ?? 0),
+      // coût FIFO du lot consommé, sinon prix d'achat par défaut du SKU
+      cogsUnit: fifo.costs.get(it.order_item_id)?.unitCost ?? (it.cogs === null || it.cogs === undefined ? null : it.cogs + (it.extra_cost ?? 0)),
     };
   });
 }
 
-export function loadRefunds(range: Range, cfg: AppConfig = getConfig()): RefundLine[] {
+export function loadRefunds(range: Range, cfg: Scope = getConfig()): RefundLine[] {
+  const fifo = loadFifo();
   const rows = getDb()
     .prepare(
       `SELECT f.*, p.cogs, p.extra_cost,
               (SELECT oi.quantity FROM order_items oi WHERE oi.order_id = f.order_id AND (f.sku IS NULL OR oi.sku = f.sku) LIMIT 1) AS item_qty
        FROM finance_lines f LEFT JOIN products p ON p.sku = f.sku
-       WHERE f.kind = 'refund' AND f.posted_date >= ? AND f.posted_date < ?`,
+       WHERE f.kind = 'refund' AND f.posted_date >= ? AND f.posted_date < ? AND (? IS NULL OR f.marketplace_id = ?)`,
     )
-    .all(range.from.toISOString(), range.to.toISOString()) as (FinRow & {
+    .all(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null, cfg.mkt ?? null) as (FinRow & {
     cogs: number | null;
     extra_cost: number | null;
     item_qty: number | null;
@@ -254,7 +268,7 @@ export function loadRefunds(range: Range, cfg: AppConfig = getConfig()): RefundL
     const r = vatRateFor(f.marketplace_id, cfg);
     const vatBack = hasTax ? -f.tax : refundTtc - refundTtc / (1 + r);
     const qty = f.quantity ?? (refundTtc > 0 ? f.item_qty ?? 1 : 0);
-    const cogsUnit = f.cogs !== null && f.cogs !== undefined ? f.cogs + (f.extra_cost ?? 0) : 0;
+    const cogsUnit = (f.sku ? currentUnitCost(f.sku, fifo) : null) ?? 0;
     return {
       date: f.posted_date,
       orderId: f.order_id,
@@ -268,12 +282,15 @@ export function loadRefunds(range: Range, cfg: AppConfig = getConfig()): RefundL
   });
 }
 
-export function loadOtherCosts(range: Range, cfg: AppConfig = getConfig()): OtherCost[] {
+export function loadOtherCosts(range: Range, cfg: Scope = getConfig()): OtherCost[] {
   const db = getDb();
   const amazon = (
     db
-      .prepare(`SELECT posted_date, description, transaction_type, total FROM finance_lines WHERE kind = 'other' AND posted_date >= ? AND posted_date < ?`)
-      .all(range.from.toISOString(), range.to.toISOString()) as FinRow[]
+      .prepare(
+        `SELECT posted_date, description, transaction_type, total FROM finance_lines
+         WHERE kind = 'other' AND posted_date >= ? AND posted_date < ? AND (? IS NULL OR marketplace_id = ?)`,
+      )
+      .all(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null, cfg.mkt ?? null) as FinRow[]
   ).map<OtherCost>((f) => ({
     date: f.posted_date,
     label: f.description || f.transaction_type || "Frais Amazon",
@@ -298,10 +315,11 @@ export function loadOtherCosts(range: Range, cfg: AppConfig = getConfig()): Othe
     amount: e.amount,
     source: "manual",
   }));
-  return [...amazon, ...manual];
+  // Les dépenses saisies ne sont pas rattachées à un pays : comptées seulement dans la vue « Tous »
+  return cfg.mkt ? amazon : [...amazon, ...manual];
 }
 
-export function summarize(range: Range, cfg: AppConfig = getConfig()): Summary {
+export function summarize(range: Range, cfg: Scope = getConfig()): Summary {
   return computeSummary(loadSales(range, cfg), loadRefunds(range, cfg), loadOtherCosts(range, cfg), {
     vatRegistered: cfg.vatRegistered,
     feesVatRate: cfg.feesVatRate,
@@ -321,7 +339,7 @@ export interface Card {
   compare: { pct: number | null; label: string; previousSales: number } | null;
 }
 
-export function dashboardCards(now = new Date(), cfg: AppConfig = getConfig()): Card[] {
+export function dashboardCards(now = new Date(), cfg: Scope = getConfig()): Card[] {
   const tz = cfg.timezone;
   const today = toYMD(now, tz);
   const yesterday = addDays(today, -1);
@@ -415,7 +433,7 @@ export interface ChartPoint {
 }
 
 /** Série journalière (mois) ou mensuelle (année). */
-export function chartSeries(period: { year: number; month?: number }, now = new Date(), cfg: AppConfig = getConfig()): ChartPoint[] {
+export function chartSeries(period: { year: number; month?: number }, now = new Date(), cfg: Scope = getConfig()): ChartPoint[] {
   const tz = cfg.timezone;
   const range = period.month ? monthRange(period.year, period.month, tz) : yearRange(period.year, tz);
   const sales = loadSales(range, cfg);
@@ -477,7 +495,7 @@ export interface ProductRow {
 }
 
 /** Rentabilité par produit sur une période. */
-export function productBreakdown(range: Range, cfg: AppConfig = getConfig()): ProductRow[] {
+export function productBreakdown(range: Range, cfg: Scope = getConfig()): ProductRow[] {
   const sales = loadSales(range, cfg);
   const refunds = loadRefunds(range, cfg);
   const bySku = new Map<string, SaleLine[]>();
@@ -513,4 +531,107 @@ export function productBreakdown(range: Range, cfg: AppConfig = getConfig()): Pr
       };
     })
     .sort((a, b) => b.salesTtc - a.salesTtc);
+}
+
+/* ---------------------------------------------------------------------------
+ * Rentabilité par pays (marketplace)
+ * ------------------------------------------------------------------------- */
+
+export interface CountryRow {
+  code: string;
+  name: string;
+  summary: Summary;
+}
+
+export function countryBreakdown(range: Range, cfg: AppConfig = getConfig()): CountryRow[] {
+  return cfg.marketplaces
+    .map((m) => ({ code: m.code, name: m.name, summary: summarize(range, { ...cfg, mkt: m.id }) }))
+    .filter((r) => r.summary.orders > 0 || r.summary.refunds > 0)
+    .sort((a, b) => b.summary.salesTtc - a.summary.salesTtc);
+}
+
+/* ---------------------------------------------------------------------------
+ * Liste des commandes avec leur bénéfice
+ * ------------------------------------------------------------------------- */
+
+export interface OrderRowView {
+  orderId: string;
+  date: string;
+  country: string | null;
+  status: string;
+  items: { sku: string | null; title: string | null; asin: string | null; quantity: number }[];
+  units: number;
+  salesTtc: number;
+  salesHt: number;
+  fees: number;
+  feesEstimated: boolean;
+  cogs: number | null;
+  profit: number | null;
+  margin: number | null;
+  refunded: boolean;
+}
+
+export function ordersList(
+  range: Range,
+  opts: { q?: string; onlyLoss?: boolean; page?: number; pageSize?: number } = {},
+  cfg: Scope = getConfig(),
+): { rows: OrderRowView[]; total: number; totals: { salesTtc: number; profit: number; orders: number } } {
+  const lines = loadSales(range, cfg);
+  const feeFactor = cfg.vatRegistered ? 1 : 1 + cfg.feesVatRate;
+  const byOrder = new Map<string, SaleLine[]>();
+  for (const l of lines) byOrder.set(l.orderId, [...(byOrder.get(l.orderId) ?? []), l]);
+
+  const ids = [...byOrder.keys()];
+  const refunded = new Set<string>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    for (const r of getDb()
+      .prepare(`SELECT DISTINCT order_id FROM finance_lines WHERE kind = 'refund' AND order_id IN (${chunk.map(() => "?").join(",")})`)
+      .all(...chunk) as { order_id: string }[])
+      refunded.add(r.order_id);
+  }
+
+  const codeOf = (id: string | null) => cfg.marketplaces.find((m) => m.id === id)?.code ?? null;
+  let rows: OrderRowView[] = [...byOrder.entries()].map(([orderId, ls]) => {
+    const salesTtc = ls.reduce((s, l) => s + l.salesTtc, 0);
+    const vat = cfg.vatRegistered ? ls.reduce((s, l) => s + l.vat, 0) : 0;
+    const fees = ls.reduce((s, l) => s + l.fees, 0) * feeFactor;
+    const cogsKnown = ls.every((l) => l.cogsUnit !== null);
+    const cogs = cogsKnown ? ls.reduce((s, l) => s + (l.cogsUnit as number) * l.quantity, 0) : null;
+    const salesHt = salesTtc - vat;
+    const profit = cogs === null ? null : salesHt - fees - cogs;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    return {
+      orderId,
+      date: ls[0].date,
+      country: codeOf(ls[0].marketplaceId),
+      status: ls[0].status,
+      items: ls.map((l) => ({ sku: l.sku, title: l.title, asin: l.asin, quantity: l.quantity })),
+      units: ls.reduce((s, l) => s + l.quantity, 0),
+      salesTtc: r2(salesTtc),
+      salesHt: r2(salesHt),
+      fees: r2(fees),
+      feesEstimated: ls.some((l) => l.feesEstimated),
+      cogs: cogs === null ? null : r2(cogs),
+      profit: profit === null ? null : r2(profit),
+      margin: profit !== null && (cfg.vatRegistered ? salesHt : salesTtc) > 0 ? profit / (cfg.vatRegistered ? salesHt : salesTtc) : null,
+      refunded: refunded.has(orderId),
+    };
+  });
+
+  if (opts.q) {
+    const q = opts.q.toLowerCase();
+    rows = rows.filter((r) => r.orderId.toLowerCase().includes(q) || r.items.some((i) => `${i.sku} ${i.asin} ${i.title}`.toLowerCase().includes(q)));
+  }
+  if (opts.onlyLoss) rows = rows.filter((r) => r.profit !== null && r.profit < 0);
+  rows.sort((a, b) => b.date.localeCompare(a.date));
+
+  const totals = {
+    salesTtc: Math.round(rows.reduce((s, r) => s + r.salesTtc, 0) * 100) / 100,
+    profit: Math.round(rows.reduce((s, r) => s + (r.profit ?? 0), 0) * 100) / 100,
+    orders: rows.length,
+  };
+  const size = opts.pageSize ?? 100;
+  const page = Math.max(1, opts.page ?? 1);
+  return { rows: rows.slice((page - 1) * size, page * size), total: rows.length, totals };
 }

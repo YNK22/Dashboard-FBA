@@ -30,6 +30,10 @@ services:
       TZ: ${TIMEZONE:-Europe/Paris}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
       SYNC_INITIAL_DAYS: ${SYNC_INITIAL_DAYS:-60}
+      INVENTORY_MARKETPLACE: ${INVENTORY_MARKETPLACE:-}
+      REORDER_DAYS: ${REORDER_DAYS:-30}
+      TARGET_STOCK_DAYS: ${TARGET_STOCK_DAYS:-60}
+      OVERSTOCK_DAYS: ${OVERSTOCK_DAYS:-180}
       DATABASE_PATH: /app/data/dashboard.db
     volumes:
       - dashboard-fba-data:/app/data
