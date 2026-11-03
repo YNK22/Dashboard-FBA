@@ -45,8 +45,8 @@ Vous créez une application **privée** : elle n'est utilisée que par votre pro
 ## Étape 1 — Ouvrir l'espace développeur
 
 1. Connectez-vous à **Seller Central** : <https://sellercentral.amazon.fr>
-2. Menu ☰ en haut à gauche → **Applications et services** → **Développer des applications**.
-   Lien direct : <https://sellercentral.amazon.fr/sellingpartner/developerconsole>
+2. Lien direct : <https://sellercentral.amazon.fr/sellingpartner/developerconsole>
+   Ou par le menu ☰ en haut à gauche : **Intégration** → **Intégration API** (*Integration → API Integration*). Sur les anciennes versions de Seller Central : **Applications et services** → **Développer des applications**.
 3. Si c'est la première fois, Amazon affiche un bouton **« Accéder au profil développeur »** (*Proceed to Developer Profile*). Cliquez dessus.
 
 > L'interface est parfois en anglais : les noms anglais sont indiqués entre parenthèses.
