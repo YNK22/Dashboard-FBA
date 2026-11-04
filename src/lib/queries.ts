@@ -134,6 +134,12 @@ function loadItems(from: string, to: string, mkt: string | null = null): ItemRow
     .all(from, to, mkt, mkt) as ItemRow[];
 }
 
+/**
+ * Une transaction différée libérée garde le statut DEFERRED_RELEASED et Amazon crée en plus
+ * une transaction RELEASED identique : on ignore la première pour ne pas compter deux fois.
+ */
+const ACTIVE_FIN = "status IS NOT 'DEFERRED_RELEASED'";
+
 function loadShipmentFinance(orderIds: string[]): FinRow[] {
   if (orderIds.length === 0) return [];
   const db = getDb();
@@ -142,7 +148,7 @@ function loadShipmentFinance(orderIds: string[]): FinRow[] {
     const chunk = orderIds.slice(i, i + 500);
     out.push(
       ...(db
-        .prepare(`SELECT * FROM finance_lines WHERE kind = 'shipment' AND order_id IN (${chunk.map(() => "?").join(",")})`)
+        .prepare(`SELECT * FROM finance_lines WHERE kind = 'shipment' AND ${ACTIVE_FIN} AND order_id IN (${chunk.map(() => "?").join(",")})`)
         .all(...chunk) as FinRow[]),
     );
   }
@@ -254,7 +260,7 @@ export function loadRefunds(range: Range, cfg: Scope = getConfig()): RefundLine[
       `SELECT f.*, p.cogs, p.extra_cost,
               (SELECT oi.quantity FROM order_items oi WHERE oi.order_id = f.order_id AND (f.sku IS NULL OR oi.sku = f.sku) LIMIT 1) AS item_qty
        FROM finance_lines f LEFT JOIN products p ON p.sku = f.sku
-       WHERE f.kind = 'refund' AND f.posted_date >= ? AND f.posted_date < ? AND (? IS NULL OR f.marketplace_id = ?)`,
+       WHERE f.kind = 'refund' AND f.${ACTIVE_FIN} AND f.posted_date >= ? AND f.posted_date < ? AND (? IS NULL OR f.marketplace_id = ?)`,
     )
     .all(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null, cfg.mkt ?? null) as (FinRow & {
     cogs: number | null;
@@ -288,7 +294,7 @@ export function loadOtherCosts(range: Range, cfg: Scope = getConfig()): OtherCos
     db
       .prepare(
         `SELECT posted_date, description, transaction_type, total FROM finance_lines
-         WHERE kind = 'other' AND posted_date >= ? AND posted_date < ? AND (? IS NULL OR marketplace_id = ?)`,
+         WHERE kind = 'other' AND ${ACTIVE_FIN} AND posted_date >= ? AND posted_date < ? AND (? IS NULL OR marketplace_id = ?)`,
       )
       .all(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null, cfg.mkt ?? null) as FinRow[]
   ).map<OtherCost>((f) => ({
@@ -586,7 +592,7 @@ export function ordersList(
   for (let i = 0; i < ids.length; i += 500) {
     const chunk = ids.slice(i, i + 500);
     for (const r of getDb()
-      .prepare(`SELECT DISTINCT order_id FROM finance_lines WHERE kind = 'refund' AND order_id IN (${chunk.map(() => "?").join(",")})`)
+      .prepare(`SELECT DISTINCT order_id FROM finance_lines WHERE kind = 'refund' AND ${ACTIVE_FIN} AND order_id IN (${chunk.map(() => "?").join(",")})`)
       .all(...chunk) as { order_id: string }[])
       refunded.add(r.order_id);
   }
