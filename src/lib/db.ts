@@ -151,8 +151,18 @@ export function getDb(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
   db.exec(SCHEMA);
+  migrate(db);
   globalThis.__fbaDb = db;
   return db;
+}
+
+/** Colonnes ajoutées après la première version (bases existantes). */
+function migrate(db: Database.Database): void {
+  const cols = new Set((db.prepare("PRAGMA table_info(finance_lines)").all() as { name: string }[]).map((c) => c.name));
+  // TVA facturée par Amazon sur ses frais (signée, comme fees) : non récupérable hors assujettissement
+  if (!cols.has("fee_tax")) db.exec("ALTER TABLE finance_lines ADD COLUMN fee_tax REAL DEFAULT 0");
+  // Détail des frais par type Amazon : JSON { "Commission": [HT, TVA], ... } (montants signés)
+  if (!cols.has("fee_detail")) db.exec("ALTER TABLE finance_lines ADD COLUMN fee_detail TEXT");
 }
 
 /** Incrémenté à chaque écriture de données : invalide les caches de calcul (FIFO...). */

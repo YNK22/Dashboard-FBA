@@ -74,13 +74,23 @@ interface FinRow {
   tax: number;
   promo: number;
   fees: number;
+  fee_tax: number | null;
+  fee_detail: string | null;
   total: number;
+}
+
+/**
+ * Frais Amazon d'une ligne financière (signés, négatifs = coût) : HT si vous êtes assujetti à la TVA,
+ * sinon TVA réellement facturée par Amazon comprise (ce que vous payez vraiment, en micro-entreprise).
+ */
+function feeOf(f: Pick<FinRow, "fees" | "fee_tax">, cfg: AppConfig): number {
+  return f.fees + (cfg.vatRegistered ? 0 : f.fee_tax ?? 0);
 }
 
 const HISTORY_DAYS = 120;
 
 /** Frais réels par article de commande, à partir des lignes financières "shipment". */
-function allocateActualFees(items: ItemRow[], finLines: FinRow[]): Map<string, number> {
+function allocateActualFees(items: ItemRow[], finLines: FinRow[], cfg: AppConfig): Map<string, number> {
   const byOrder = new Map<string, FinRow[]>();
   for (const f of finLines) {
     if (!f.order_id) continue;
@@ -104,7 +114,7 @@ function allocateActualFees(items: ItemRow[], finLines: FinRow[]): Map<string, n
     let unassigned = 0;
     const bySku = new Map<string, number>();
     for (const l of lines) {
-      const cost = -l.fees; // frais Amazon négatifs -> coût positif
+      const cost = -feeOf(l, cfg); // frais Amazon négatifs -> coût positif
       if (l.sku && skus.has(l.sku)) bySku.set(l.sku, (bySku.get(l.sku) ?? 0) + cost);
       else unassigned += cost;
     }
@@ -168,7 +178,7 @@ function feeHistory(cfg: AppConfig): { map: Map<string, FeeHistory>; prices: Map
   const now = new Date();
   const items = loadItems(new Date(now.getTime() - HISTORY_DAYS * 86_400_000).toISOString(), now.toISOString());
   const fin = loadShipmentFinance([...new Set(items.map((i) => i.order_id))]);
-  const actual = allocateActualFees(items, fin);
+  const actual = allocateActualFees(items, fin, cfg);
   const agg = new Map<string, { fees: number; units: number; sales: number }>();
   const prices = new Map<string, number>();
   for (const it of [...items].sort((a, b) => a.purchase_date.localeCompare(b.purchase_date))) {
@@ -198,10 +208,10 @@ function feeHistory(cfg: AppConfig): { map: Map<string, FeeHistory>; prices: Map
   }[];
   for (const e of est) {
     const key = `${e.sku}|${e.marketplace_id}`;
-    if (!map.has(key)) map.set(key, { feesPerUnit: e.fees, unitPriceTtc: e.price });
+    // L'API Product Fees renvoie des frais HT
+    if (!map.has(key)) map.set(key, { feesPerUnit: e.fees * (cfg.vatRegistered ? 1 : 1 + cfg.feesVatRate), unitPriceTtc: e.price });
   }
   historyCache = { at: Date.now(), map, prices };
-  void cfg;
   return historyCache;
 }
 
@@ -209,7 +219,7 @@ export function loadSales(range: Range, cfg: Scope = getConfig()): SaleLine[] {
   const items = loadItems(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null);
   const fifo = loadFifo();
   const fin = loadShipmentFinance([...new Set(items.map((i) => i.order_id))]);
-  const actual = allocateActualFees(items, fin);
+  const actual = allocateActualFees(items, fin, cfg);
   const { map: history, prices } = feeHistory(cfg);
 
   return items.map((it) => {
@@ -282,7 +292,7 @@ export function loadRefunds(range: Range, cfg: Scope = getConfig()): RefundLine[
       quantity: qty,
       refundTtc,
       vatBack,
-      feesNet: f.fees,
+      feesNet: feeOf(f, cfg),
       cogsRecovered: cfg.returnRestockRate * qty * cogsUnit,
     };
   });
@@ -293,14 +303,16 @@ export function loadOtherCosts(range: Range, cfg: Scope = getConfig()): OtherCos
   const amazon = (
     db
       .prepare(
-        `SELECT posted_date, description, transaction_type, total FROM finance_lines
+        `SELECT posted_date, description, transaction_type, total, fee_tax FROM finance_lines
          WHERE kind = 'other' AND ${ACTIVE_FIN} AND posted_date >= ? AND posted_date < ? AND (? IS NULL OR marketplace_id = ?)`,
       )
       .all(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null, cfg.mkt ?? null) as FinRow[]
   ).map<OtherCost>((f) => ({
     date: f.posted_date,
     label: f.description || f.transaction_type || "Frais Amazon",
-    amount: -f.total,
+    category: otherCategory(f.transaction_type, f.description),
+    // montant total = TVA comprise ; HT si assujetti
+    amount: -(f.total - (cfg.vatRegistered ? f.fee_tax ?? 0 : 0)),
     source: "amazon",
   }));
   const fromKey = localDayKey(range.from.toISOString(), cfg.timezone);
@@ -318,6 +330,7 @@ export function loadOtherCosts(range: Range, cfg: Scope = getConfig()): OtherCos
       cfg.timezone,
     ).toISOString(),
     label: e.label,
+    category: `Dépense : ${e.label}`,
     amount: e.amount,
     source: "manual",
   }));
@@ -331,6 +344,147 @@ export function summarize(range: Range, cfg: Scope = getConfig()): Summary {
     feesVatRate: cfg.feesVatRate,
   });
 }
+
+/* ---------------------------------------------------------------------------
+ * Détail du bénéfice (chaque montant, ligne par ligne)
+ * ------------------------------------------------------------------------- */
+
+/** Libellés des frais Amazon par commande (type de frais de l'API Finances). */
+const FEE_LABELS: [RegExp, string][] = [
+  [/^commission$/i, "Commission Amazon"],
+  [/^refundcommission$/i, "Frais de remboursement"],
+  [/fulfillment|fbaperunit|fbaweight|pickpack/i, "Frais d'expédition FBA"],
+  [/digitalservices/i, "Taxe services numériques (DST)"],
+  [/closing/i, "Frais de clôture"],
+  [/shippingchargeback|shippinghb/i, "Port refacturé par Amazon"],
+  [/giftwrapchargeback/i, "Emballage cadeau refacturé"],
+];
+
+export function feeLabel(name: string): string {
+  return FEE_LABELS.find(([re]) => re.test(name))?.[1] ?? name;
+}
+
+/** Regroupement des frais/crédits Amazon hors commandes. */
+export function otherCategory(type: string | null, description: string | null): string {
+  const t = `${type ?? ""} ${description ?? ""}`;
+  if (/reimbursement|clawback/i.test(t)) return "Indemnisations FBA (stock perdu ou endommagé)";
+  if (/subscription/i.test(t)) return "Abonnement vendeur Amazon";
+  if (/inbound|transportation|placement/i.test(t)) return "Transport vers les entrepôts (inbound)";
+  if (/storage/i.test(t)) return "Stockage FBA";
+  if (/removal|disposal|liquidat/i.test(t)) return "Retrait / destruction de stock";
+  if (/epr|eco/i.test(t)) return "Éco-participation (EPR)";
+  if (/advertis|sponsored|ads/i.test(t)) return "Publicité";
+  return description || type || "Autres frais Amazon";
+}
+
+export interface BreakdownLine {
+  label: string;
+  amount: number; // signé : + gain, − coût
+  note?: string;
+}
+
+export interface BreakdownSection {
+  key: "sales" | "fees" | "cogs" | "refunds" | "other";
+  title: string;
+  total: number;
+  lines: BreakdownLine[];
+}
+
+export interface ProfitBreakdown {
+  summary: Summary;
+  vatRegistered: boolean;
+  sections: BreakdownSection[];
+  feeVat: number; // TVA payée à Amazon sur ses frais (incluse dans les montants ci-dessus si non assujetti)
+}
+
+const r2b = (n: number) => Math.round(n * 100) / 100;
+
+function linesFrom(map: Map<string, number>, notes: Map<string, string> = new Map()): BreakdownLine[] {
+  return [...map.entries()]
+    .filter(([, v]) => Math.abs(v) >= 0.005)
+    .sort((a, b) => a[1] - b[1])
+    .map(([label, amount]) => ({ label, amount: r2b(amount), note: notes.get(label) }));
+}
+
+/**
+ * Détail du bénéfice net sur une période : mêmes données et mêmes règles que les cartes du dashboard,
+ * mais chaque frais Amazon est séparé (commission, FBA, taxe numérique, abonnement, inbound…).
+ * La somme des sections est égale au bénéfice net.
+ */
+export function profitBreakdown(range: Range, cfg: Scope = getConfig()): ProfitBreakdown {
+  const sales = loadSales(range, cfg);
+  const refunds = loadRefunds(range, cfg);
+  const others = loadOtherCosts(range, cfg);
+  const summary = computeSummary(sales, refunds, others, { vatRegistered: cfg.vatRegistered, feesVatRate: cfg.feesVatRate });
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+  let feeVat = 0;
+
+  // Ventes
+  const salesLines: BreakdownLine[] = [{ label: "Ventes TTC (articles + port − promotions)", amount: summary.salesTtc }];
+  if (cfg.vatRegistered) salesLines.push({ label: "TVA collectée", amount: -summary.vat });
+
+  // Frais Amazon des commandes : réels par type, estimés pour les commandes pas encore réglées
+  const fees = new Map<string, number>();
+  const settled = new Set(sales.filter((l) => !l.feesEstimated).map((l) => l.orderId));
+  for (const f of loadShipmentFinance([...settled])) {
+    feeVat += -(f.fee_tax ?? 0);
+    const detail = f.fee_detail ? (JSON.parse(f.fee_detail) as Record<string, [number, number]>) : null;
+    if (!detail) {
+      if (f.fees) add(fees, "Autres frais sur commandes", feeOf(f, cfg));
+      continue;
+    }
+    for (const [name, [ht, tva]] of Object.entries(detail)) add(fees, feeLabel(name), ht + (cfg.vatRegistered ? 0 : tva));
+  }
+  const estimated = sales.filter((l) => l.feesEstimated).reduce((s, l) => s + l.fees, 0);
+  if (estimated) fees.set("Frais estimés (commandes pas encore réglées)", -estimated);
+  const feeLines = linesFrom(fees);
+  const feeGap = -summary.amazonFees - feeLines.reduce((s, l) => s + l.amount, 0);
+  if (Math.abs(feeGap) >= 0.01) feeLines.push({ label: "Arrondis", amount: r2b(feeGap) });
+
+  // Remboursements
+  const refundBase = refunds.reduce((s, r) => s + r.refundTtc - (cfg.vatRegistered ? r.vatBack : 0), 0);
+  const refundFees = refunds.reduce((s, r) => s + r.feesNet, 0);
+  const restock = refunds.reduce((s, r) => s + r.cogsRecovered, 0);
+  const refundLines: BreakdownLine[] = [
+    { label: `Montant remboursé aux clients${cfg.vatRegistered ? " (HT)" : ""}`, amount: r2b(-refundBase) },
+    { label: "Frais rendus par Amazon, nets des frais de remboursement", amount: r2b(refundFees) },
+  ];
+  if (restock) refundLines.push({ label: "Stock remis en vente (coût d'achat récupéré)", amount: r2b(restock) });
+  feeVat += -(
+    getDb()
+      .prepare(
+      `SELECT COALESCE(SUM(fee_tax), 0) AS t FROM finance_lines WHERE kind != 'shipment' AND ${ACTIVE_FIN}
+       AND posted_date >= ? AND posted_date < ? AND (? IS NULL OR marketplace_id = ?)`,
+    )
+    .get(range.from.toISOString(), range.to.toISOString(), cfg.mkt ?? null, cfg.mkt ?? null) as { t: number }
+  ).t;
+
+  // Autres frais et crédits
+  const other = new Map<string, number>();
+  for (const o of others) add(other, o.category ?? o.label, -o.amount);
+
+  const sections: BreakdownSection[] = [
+    { key: "sales", title: cfg.vatRegistered ? "Ventes HT" : "Ventes", total: summary.salesHt, lines: salesLines },
+    { key: "fees", title: "Frais Amazon sur les commandes", total: -summary.amazonFees, lines: feeLines },
+    {
+      key: "cogs",
+      title: "Coût d'achat des unités vendues",
+      total: -summary.cogs,
+      lines: [
+        {
+          label: `${fmtUnits(summary.units - summary.missingCogsUnits)} unité(s) avec prix d'achat`,
+          amount: -summary.cogs,
+          note: summary.missingCogsUnits ? `${summary.missingCogsUnits} unité(s) sans prix d'achat, comptée(s) à 0 €` : undefined,
+        },
+      ],
+    },
+    { key: "refunds", title: "Remboursements et retours", total: -summary.refundCost, lines: refundLines },
+    { key: "other", title: "Autres frais et crédits Amazon", total: -summary.otherCosts, lines: linesFrom(other) },
+  ];
+  return { summary, vatRegistered: cfg.vatRegistered, sections, feeVat: r2b(feeVat) };
+}
+
+const fmtUnits = (n: number) => String(Math.round(n));
 
 /* ---------------------------------------------------------------------------
  * Données du dashboard
@@ -583,7 +737,6 @@ export function ordersList(
   cfg: Scope = getConfig(),
 ): { rows: OrderRowView[]; total: number; totals: { salesTtc: number; profit: number; orders: number } } {
   const lines = loadSales(range, cfg);
-  const feeFactor = cfg.vatRegistered ? 1 : 1 + cfg.feesVatRate;
   const byOrder = new Map<string, SaleLine[]>();
   for (const l of lines) byOrder.set(l.orderId, [...(byOrder.get(l.orderId) ?? []), l]);
 
@@ -601,7 +754,7 @@ export function ordersList(
   let rows: OrderRowView[] = [...byOrder.entries()].map(([orderId, ls]) => {
     const salesTtc = ls.reduce((s, l) => s + l.salesTtc, 0);
     const vat = cfg.vatRegistered ? ls.reduce((s, l) => s + l.vat, 0) : 0;
-    const fees = ls.reduce((s, l) => s + l.fees, 0) * feeFactor;
+    const fees = ls.reduce((s, l) => s + l.fees, 0);
     const cogsKnown = ls.every((l) => l.cogsUnit !== null);
     const cogs = cogsKnown ? ls.reduce((s, l) => s + (l.cogsUnit as number) * l.quantity, 0) : null;
     const salesHt = salesTtc - vat;

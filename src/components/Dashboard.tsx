@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Card, ChartPoint, CountryRow, ProductRow } from "@/lib/queries";
 import BarChart from "./BarChart";
+import BreakdownPanel from "./BreakdownPanel";
 import PeriodCard from "./PeriodCard";
 import { fmtEur, fmtInt, fmtPct, signClass } from "./format";
 
@@ -126,6 +127,7 @@ export default function Dashboard() {
           : !error && <div className="muted">Chargement…</div>}
       </div>
 
+      <BreakdownPanel refreshKey={data?.generatedAt} mkt={mkt} />
       <ChartPanel refreshKey={data?.generatedAt} mkt={mkt} />
       <ProductsPanel refreshKey={data?.generatedAt} mkt={mkt} />
     </>

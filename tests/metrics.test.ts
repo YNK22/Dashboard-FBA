@@ -31,11 +31,15 @@ test("bénéfice, marge et ROI (assujetti TVA)", () => {
   assert.ok(Math.abs(s.roi! - 0.875) < 1e-9);
 });
 
-test("non assujetti : pas de déduction de TVA, TVA ajoutée aux frais", () => {
-  const s = computeSummary([line()], [], [], { vatRegistered: false, feesVatRate: 0.2 });
+test("non assujetti : pas de déduction de TVA, frais pris tels quels (déjà TVA comprise)", () => {
+  const s = computeSummary([line({ fees: 30 })], [], [{ date: "2026-10-09", label: "Subscription", amount: 46.8, source: "amazon" }], {
+    vatRegistered: false,
+    feesVatRate: 0.2,
+  });
   assert.equal(s.salesHt, 120);
-  assert.equal(s.amazonFees, 30);
-  assert.equal(s.netProfit, 50); // 120 - 30 - 40
+  assert.equal(s.amazonFees, 30); // pas de seconde majoration de 20 %
+  assert.equal(s.otherCosts, 46.8);
+  assert.equal(s.netProfit, 3.2); // 120 - 30 - 40 - 46,8
 });
 
 test("remboursement : coût = remboursé HT - frais rendus - stock récupéré", () => {

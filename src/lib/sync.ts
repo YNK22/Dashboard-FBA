@@ -115,8 +115,8 @@ async function doSync({ days, log = console.log }: { days?: number; log?: (msg: 
 
     const deleteTx = db.prepare("DELETE FROM finance_lines WHERE transaction_id = ?");
     const insertLine = db.prepare(`
-      INSERT OR REPLACE INTO finance_lines(id, transaction_id, posted_date, kind, transaction_type, description, status, order_id, sku, quantity, marketplace_id, revenue, tax, promo, fees, total)
-      VALUES(@id, @transaction_id, @posted_date, @kind, @transaction_type, @description, @status, @order_id, @sku, @quantity, @marketplace_id, @revenue, @tax, @promo, @fees, @total)`);
+      INSERT OR REPLACE INTO finance_lines(id, transaction_id, posted_date, kind, transaction_type, description, status, order_id, sku, quantity, marketplace_id, revenue, tax, promo, fees, fee_tax, fee_detail, total)
+      VALUES(@id, @transaction_id, @posted_date, @kind, @transaction_type, @description, @status, @order_id, @sku, @quantity, @marketplace_id, @revenue, @tax, @promo, @fees, @fee_tax, @fee_detail, @total)`);
 
     // Fenêtres de 30 jours maximum
     for (let from = finFrom; from < finTo; ) {

@@ -101,6 +101,80 @@ test("transaction d'expédition : frais par article + frais de commande", () => 
   assert.equal(lines[1].fees, -3); // reste non rattaché à un article
 });
 
+test("TVA sur les frais Amazon séparée (fee_tax) et détaillée par type de frais", () => {
+  const money = (n: number) => ({ currencyAmount: n, currencyCode: "EUR" });
+  const lines = parseTransaction(
+    {
+      transactionId: "T3",
+      transactionType: "Shipment",
+      description: "Order Payment",
+      postedDate: "2026-10-09T08:00:00Z",
+      relatedIdentifiers: [{ relatedIdentifierName: "ORDER_ID", relatedIdentifierValue: "404-1" }],
+      totalAmount: money(7.13),
+      items: [
+        {
+          totalAmount: money(7.13),
+          contexts: [{ contextType: "ProductContext", sku: "SKU1", quantityShipped: 1 }],
+          breakdowns: [
+            { breakdownType: "ProductCharges", breakdownAmount: money(13.3), breakdowns: [{ breakdownType: "OurPricePrincipal", breakdownAmount: money(13.3) }] },
+            {
+              breakdownType: "AmazonFees",
+              breakdownAmount: money(-5.99),
+              breakdowns: [
+                {
+                  breakdownType: "FBAPerUnitFulfillmentFee",
+                  breakdownAmount: money(-2.73),
+                  breakdowns: [
+                    { breakdownType: "Base", breakdownAmount: money(-2.27) },
+                    { breakdownType: "Tax", breakdownAmount: money(-0.46) },
+                  ],
+                },
+                {
+                  breakdownType: "Commission",
+                  breakdownAmount: money(-3.26),
+                  breakdowns: [
+                    { breakdownType: "Base", breakdownAmount: money(-2.72) },
+                    { breakdownType: "Tax", breakdownAmount: money(-0.54) },
+                  ],
+                },
+              ],
+            },
+            {
+              breakdownType: "DigitalServicesFee",
+              breakdownAmount: money(-0.18),
+              breakdowns: [
+                { breakdownType: "Base", breakdownAmount: money(-0.15) },
+                { breakdownType: "Tax", breakdownAmount: money(-0.03) },
+              ],
+            },
+          ],
+        },
+      ],
+    } as ApiTransaction,
+    cfg,
+  );
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].revenue, 13.3);
+  assert.equal(lines[0].tax, 0); // la TVA des frais n'est pas de la TVA sur ventes
+  assert.equal(lines[0].fees, -5.14);
+  assert.equal(lines[0].fee_tax, -1.03);
+  assert.deepEqual(JSON.parse(lines[0].fee_detail!), {
+    FBAPerUnitFulfillmentFee: [-2.27, -0.46],
+    Commission: [-2.72, -0.54],
+    DigitalServicesFee: [-0.15, -0.03],
+  });
+});
+
+test("prélèvement carte pour solde négatif et son remboursement : ignorés", () => {
+  for (const [type, desc, amount] of [
+    ["DebtRecovery", "DebtPayment", 46.8],
+    ["ChargeRefund - ChargeRefund", "ChargeRefund", -46.8],
+  ] as const) {
+    const lines = parseTransaction({ transactionId: "T4", transactionType: type, description: desc, postedDate: "2026-01-09T08:00:00Z", totalAmount: { currencyAmount: amount, currencyCode: "EUR" } }, cfg);
+    assert.equal(lines.length, 0, type);
+  }
+});
+
 test("les virements vers la banque sont ignorés", () => {
   const lines = parseTransaction(
     { transactionId: "T2", transactionType: "Transfer", description: "Transfer of funds", postedDate: "2026-10-09T08:00:00Z", totalAmount: { currencyAmount: -1000, currencyCode: "EUR" } },

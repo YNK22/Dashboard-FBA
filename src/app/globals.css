@@ -712,3 +712,64 @@ input.cell.missing {
     display: none;
   }
 }
+
+/* ---------- Détail du bénéfice ---------- */
+
+.breakdown-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.breakdown-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.breakdown-hero {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.breakdown-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.breakdown-kpis strong {
+  color: var(--text);
+}
+.details.breakdown {
+  font-size: 14px;
+  gap: 2px;
+}
+.breakdown-section {
+  display: grid;
+  gap: 2px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.details .section-row span:first-child {
+  color: var(--text);
+  font-weight: 600;
+}
+.details .sub-row {
+  font-size: 13px;
+  padding-left: 18px;
+}
+.details .sub-row span:last-child {
+  color: var(--text-2);
+}
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}

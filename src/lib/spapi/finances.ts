@@ -64,6 +64,8 @@ export interface FinanceLineRow {
   tax: number;
   promo: number;
   fees: number;
+  fee_tax: number;
+  fee_detail: string | null;
   total: number;
 }
 
@@ -117,11 +119,27 @@ interface Sums {
   revenue: number;
   tax: number;
   promo: number;
-  fees: number;
+  fees: number; // frais Amazon HT (signés)
+  feeTax: number; // TVA facturée sur ces frais (signée)
 }
 
-export function sumBreakdowns(bds: ApiBreakdown[] | undefined, cfg: AppConfig = getConfig()): Sums & { leaves: number } {
-  const sums = { revenue: 0, tax: 0, promo: 0, fees: 0, leaves: 0 };
+/** Détail des frais par type Amazon : [HT, TVA], montants signés. */
+export type FeeDetail = Record<string, [number, number]>;
+
+const isFeeTaxLeaf = (p: string[]) => /^tax$/i.test(p[p.length - 1] ?? "") && p.slice(0, -1).some((n) => classifyName(n) === "fee");
+
+/** Nom du frais : dernier élément du chemin, hors feuilles « Base » / « Tax ». */
+function feeName(p: string[]): string {
+  const q = /^(base|tax)$/i.test(p[p.length - 1] ?? "") && p.length > 1 ? p.slice(0, -1) : p;
+  return q[q.length - 1] || "Autre";
+}
+
+export function sumBreakdowns(bds: ApiBreakdown[] | undefined, cfg: AppConfig = getConfig()): Sums & { leaves: number; detail: FeeDetail } {
+  const sums = { revenue: 0, tax: 0, promo: 0, fees: 0, feeTax: 0, leaves: 0, detail: {} as FeeDetail };
+  const add = (name: string, i: 0 | 1, amount: number) => {
+    const d = (sums.detail[name] ??= [0, 0]);
+    d[i] += amount;
+  };
   const walk = (list: ApiBreakdown[], path: string[]) => {
     for (const b of list) {
       const p = [...path, b.breakdownType ?? ""];
@@ -129,10 +147,17 @@ export function sumBreakdowns(bds: ApiBreakdown[] | undefined, cfg: AppConfig = 
         walk(b.breakdowns, p);
       } else {
         const amount = toEur(num(b.breakdownAmount?.currencyAmount), b.breakdownAmount?.currencyCode, cfg);
-        const cat = classifyPath(p);
-        if (cat === "fee") sums.fees += amount;
-        else sums[cat] += amount;
         sums.leaves++;
+        if (isFeeTaxLeaf(p)) {
+          sums.feeTax += amount;
+          add(feeName(p), 1, amount);
+          continue;
+        }
+        const cat = classifyPath(p);
+        if (cat === "fee") {
+          sums.fees += amount;
+          add(feeName(p), 0, amount);
+        } else sums[cat] += amount;
       }
     }
   };
@@ -140,7 +165,9 @@ export function sumBreakdowns(bds: ApiBreakdown[] | undefined, cfg: AppConfig = 
   return sums;
 }
 
-const RE_EXCLUDED = /transfer|disburse|payout|payable to|reserve|balance/i;
+// Virements et mouvements de trésorerie (prélèvement sur votre carte pour couvrir un solde négatif, et son
+// remboursement) : ce ne sont ni des gains ni des coûts
+const RE_EXCLUDED = /transfer|disburse|payout|payable to|reserve|balance|debt ?recovery|debt ?payment|charge ?refund/i;
 
 /** Transforme une transaction Amazon en lignes (une par article si possible). */
 export function parseTransaction(t: ApiTransaction, cfg: AppConfig = getConfig()): FinanceLineRow[] {
@@ -173,7 +200,7 @@ export function parseTransaction(t: ApiTransaction, cfg: AppConfig = getConfig()
   (t.items ?? []).forEach((it, i) => {
     const ctx = it.contexts?.find((c) => c.contextType === "ProductContext" || c.sku);
     const s = sumBreakdowns(it.breakdowns, cfg);
-    const itTotal = it.totalAmount ? toEur(num(it.totalAmount.currencyAmount), it.totalAmount.currencyCode, cfg) : s.revenue + s.tax + s.promo + s.fees;
+    const itTotal = it.totalAmount ? toEur(num(it.totalAmount.currencyAmount), it.totalAmount.currencyCode, cfg) : s.revenue + s.tax + s.promo + s.fees + s.feeTax;
     if (s.leaves === 0) s.fees = itTotal; // pas de détail : tout est compté comme frais/montant divers
     itemsTotal += itTotal;
     lines.push({
@@ -201,6 +228,8 @@ export function parseTransaction(t: ApiTransaction, cfg: AppConfig = getConfig()
       tax: 0,
       promo: 0,
       fees: r2(total - itemsTotal),
+      fee_tax: 0,
+      fee_detail: null,
       total: r2(total - itemsTotal),
     });
   }
@@ -208,4 +237,14 @@ export function parseTransaction(t: ApiTransaction, cfg: AppConfig = getConfig()
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
-const round = (s: Sums): Sums => ({ revenue: r2(s.revenue), tax: r2(s.tax), promo: r2(s.promo), fees: r2(s.fees) });
+const round = (s: Sums & { detail?: FeeDetail }) => {
+  const detail = Object.entries(s.detail ?? {}).filter(([, [ht, tva]]) => Math.abs(ht) >= 0.005 || Math.abs(tva) >= 0.005);
+  return {
+    revenue: r2(s.revenue),
+    tax: r2(s.tax),
+    promo: r2(s.promo),
+    fees: r2(s.fees),
+    fee_tax: r2(s.feeTax),
+    fee_detail: detail.length ? JSON.stringify(Object.fromEntries(detail.map(([k, [a, b]]) => [k, [r2(a), r2(b)]]))) : null,
+  };
+};

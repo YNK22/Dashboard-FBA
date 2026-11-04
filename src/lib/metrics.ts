@@ -13,8 +13,9 @@
  *   Marge           = bénéfice net / CA HT
  *   ROI             = bénéfice net / coût d'achat
  *
- * Si vous n'êtes pas assujetti à la TVA (VAT_REGISTERED=false), la TVA n'est pas déduite :
- * le calcul se fait sur le CA TTC, et la TVA payée sur les frais Amazon est ajoutée aux frais.
+ * Si vous n'êtes pas assujetti à la TVA (VAT_REGISTERED=false, micro-entreprise), la TVA n'est pas déduite :
+ * le calcul se fait sur le CA TTC, et les frais Amazon sont comptés TVA comprise, avec la TVA réellement
+ * facturée par Amazon (les montants reçus sont déjà dans la bonne base : aucune majoration ici).
  */
 
 export interface SaleLine {
@@ -28,7 +29,7 @@ export interface SaleLine {
   quantity: number;
   salesTtc: number;
   vat: number;
-  fees: number; // coût positif, HT
+  fees: number; // coût positif (HT si assujetti, sinon TVA comprise)
   feesEstimated: boolean;
   cogsUnit: number | null; // prix d'achat + coûts annexes, par unité (null = non renseigné)
 }
@@ -49,11 +50,12 @@ export interface OtherCost {
   label: string;
   amount: number; // positif = coût, négatif = gain (ex. remboursement Amazon d'un article perdu)
   source: "amazon" | "manual";
+  category?: string; // regroupement pour le détail du bénéfice
 }
 
 export interface TaxSettings {
   vatRegistered: boolean;
-  feesVatRate: number; // fraction, ex 0.2
+  feesVatRate: number; // fraction, ex 0.2 (sert seulement aux estimations HT de l'API Product Fees)
 }
 
 export interface Summary {
@@ -110,7 +112,6 @@ export function emptySummary(): Summary {
 
 export function computeSummary(sales: SaleLine[], refunds: RefundLine[], others: OtherCost[], tax: TaxSettings): Summary {
   const s = emptySummary();
-  const feeFactor = tax.vatRegistered ? 1 : 1 + tax.feesVatRate;
   const orders = new Set<string>();
   const pending = new Set<string>();
 
@@ -119,7 +120,7 @@ export function computeSummary(sales: SaleLine[], refunds: RefundLine[], others:
     s.units += l.quantity;
     s.salesTtc += l.salesTtc;
     s.vat += tax.vatRegistered ? l.vat : 0;
-    s.amazonFees += l.fees * feeFactor;
+    s.amazonFees += l.fees;
     if (l.cogsUnit === null) s.missingCogsUnits += l.quantity;
     else s.cogs += l.cogsUnit * l.quantity;
     if (PENDING_STATUSES.has(l.status)) {
@@ -139,13 +140,12 @@ export function computeSummary(sales: SaleLine[], refunds: RefundLine[], others:
     s.refundUnits += r.quantity;
     s.refundAmountTtc += r.refundTtc;
     const refundBase = r.refundTtc - (tax.vatRegistered ? r.vatBack : 0);
-    const fees = r.feesNet < 0 ? r.feesNet * feeFactor : r.feesNet;
-    s.refundCost += refundBase - fees - r.cogsRecovered;
+    s.refundCost += refundBase - r.feesNet - r.cogsRecovered;
   }
   s.refunds = refundKeys.size;
 
   for (const o of others) {
-    s.otherCosts += o.source === "amazon" && o.amount > 0 ? o.amount * feeFactor : o.amount;
+    s.otherCosts += o.amount;
   }
 
   s.netProfit = s.grossProfit - s.refundCost - s.otherCosts;
