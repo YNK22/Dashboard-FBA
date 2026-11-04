@@ -137,7 +137,7 @@ export default function BreakdownPanel({ refreshKey, mkt }: { refreshKey?: strin
           <div className="note" style={{ marginTop: 10 }}>
             {data.vatRegistered
               ? "Montants HT : la TVA collectée est reversée et la TVA sur les frais Amazon est récupérable."
-              : `Micro-entreprise : tout est compté TVA comprise. La TVA facturée par Amazon sur ses frais (${fmtEur(data.feeVat)} sur la période) n'est pas récupérable, elle est incluse dans les frais.`}{" "}
+              : `Micro-entreprise : tout est compté TVA comprise. La TVA payée à Amazon (sur ses frais, et retenue sur certaines ventes : ${fmtEur(data.feeVat)} sur la période) n'est pas récupérable, elle est incluse dans les frais.`}{" "}
             Ventes, frais des commandes et coût d&apos;achat sont rattachés à la date de commande ; remboursements et autres frais à la date où Amazon les
             enregistre.
           </div>

@@ -126,11 +126,20 @@ interface Sums {
 /** Détail des frais par type Amazon : [HT, TVA], montants signés. */
 export type FeeDetail = Record<string, [number, number]>;
 
-const isFeeTaxLeaf = (p: string[]) => /^tax$/i.test(p[p.length - 1] ?? "") && p.slice(0, -1).some((n) => classifyName(n) === "fee");
+/** Feuille rattachée à un frais Amazon (un des parents est un frais). */
+const underFee = (p: string[]) => p.slice(0, -1).some((n) => classifyName(n) === "fee");
+const isTaxLeaf = (p: string[]) => /^tax$/i.test(p[p.length - 1] ?? "");
+/** TVA sur ventes encaissée puis reversée directement par Amazon (régime « marketplace facilitator », retenue). */
+const isWithheldVat = (p: string[]) => p.some((n) => /facilitator|withheld/i.test(n));
+/** Remise d'Amazon sur un de ses frais (ex. frais FBA offerts : « FBAPerUnitFulfillmentFee/Promo »). */
+const isFeePromo = (p: string[]) => /promo|discount|rebate/i.test(p[p.length - 1] ?? "");
 
-/** Nom du frais : dernier élément du chemin, hors feuilles « Base » / « Tax ». */
+/** Clé du détail : nom du frais (dernier élément du chemin, hors feuilles Base / Tax / Promo). */
 function feeName(p: string[]): string {
-  const q = /^(base|tax)$/i.test(p[p.length - 1] ?? "") && p.length > 1 ? p.slice(0, -1) : p;
+  if (isWithheldVat(p)) return "MarketplaceFacilitatorVAT";
+  const leaf = p[p.length - 1] ?? "";
+  if (isFeePromo(p) && p.length > 1) return "FeePromo";
+  const q = /^(base|tax)$/i.test(leaf) && p.length > 1 ? p.slice(0, -1) : p;
   return q[q.length - 1] || "Autre";
 }
 
@@ -148,9 +157,16 @@ export function sumBreakdowns(bds: ApiBreakdown[] | undefined, cfg: AppConfig = 
       } else {
         const amount = toEur(num(b.breakdownAmount?.currencyAmount), b.breakdownAmount?.currencyCode, cfg);
         sums.leaves++;
-        if (isFeeTaxLeaf(p)) {
+        // TVA sur un frais, ou TVA sur ventes retenue par Amazon : jamais encaissée par vous
+        if ((isTaxLeaf(p) && underFee(p)) || isWithheldVat(p)) {
           sums.feeTax += amount;
           add(feeName(p), 1, amount);
+          continue;
+        }
+        // Tout ce qui est rattaché à un frais (montant de base, remise d'Amazon sur ce frais...) est un frais
+        if (underFee(p)) {
+          sums.fees += amount;
+          add(feeName(p), 0, amount);
           continue;
         }
         const cat = classifyPath(p);

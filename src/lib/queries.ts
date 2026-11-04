@@ -358,6 +358,8 @@ const FEE_LABELS: [RegExp, string][] = [
   [/closing/i, "Frais de clôture"],
   [/shippingchargeback|shippinghb/i, "Port refacturé par Amazon"],
   [/giftwrapchargeback/i, "Emballage cadeau refacturé"],
+  [/^feepromo$/i, "Remises Amazon sur les frais (frais FBA offerts…)"],
+  [/^marketplacefacilitatorvat$/i, "TVA sur ventes retenue par Amazon (UE hors France…)"],
 ];
 
 export function feeLabel(name: string): string {

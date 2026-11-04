@@ -165,6 +165,66 @@ test("TVA sur les frais Amazon séparée (fee_tax) et détaillée par type de fr
   });
 });
 
+test("frais FBA offerts par Amazon (Promo sous le frais) et TVA retenue : comptés dans les frais", () => {
+  const money = (n: number) => ({ currencyAmount: n, currencyCode: "EUR" });
+  const [l] = parseTransaction(
+    {
+      transactionId: "T5",
+      transactionType: "Shipment",
+      description: "Order Payment",
+      postedDate: "2026-08-12T08:00:00Z",
+      relatedIdentifiers: [{ relatedIdentifierName: "ORDER_ID", relatedIdentifierValue: "408-1" }],
+      totalAmount: money(9.04),
+      items: [
+        {
+          totalAmount: money(9.04),
+          contexts: [{ contextType: "ProductContext", sku: "SKU1", quantityShipped: 1 }],
+          breakdowns: [
+            { breakdownType: "ProductCharges", breakdowns: [{ breakdownType: "OurPricePrincipal", breakdownAmount: money(12.11) }] },
+            {
+              breakdownType: "Tax",
+              breakdowns: [
+                { breakdownType: "OurPriceTax", breakdownAmount: money(1.12) },
+                { breakdownType: "MarketplaceFacilitatorVAT-Principal", breakdownAmount: money(-1.12) },
+              ],
+            },
+            {
+              breakdownType: "AmazonFees",
+              breakdowns: [
+                {
+                  breakdownType: "FBAPerUnitFulfillmentFee",
+                  breakdowns: [
+                    { breakdownType: "Base", breakdownAmount: money(-2.85) },
+                    { breakdownType: "Promo", breakdownAmount: money(2.85) },
+                  ],
+                },
+                {
+                  breakdownType: "Commission",
+                  breakdowns: [
+                    { breakdownType: "Base", breakdownAmount: money(-1.57) },
+                    { breakdownType: "Tax", breakdownAmount: money(-0.32) },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as ApiTransaction,
+    cfg,
+  );
+  assert.equal(l.promo, 0); // la remise sur frais n'est pas une promotion client
+  assert.equal(l.fees, -1.57); // -2,85 + 2,85 - 1,57
+  assert.equal(l.fee_tax, -1.44); // TVA commission -0,32 + TVA retenue -1,12
+  assert.equal(l.tax, 1.12);
+  assert.deepEqual(JSON.parse(l.fee_detail!), {
+    MarketplaceFacilitatorVAT: [0, -1.12],
+    FBAPerUnitFulfillmentFee: [-2.85, 0],
+    FeePromo: [2.85, 0],
+    Commission: [-1.57, -0.32],
+  });
+});
+
 test("prélèvement carte pour solde négatif et son remboursement : ignorés", () => {
   for (const [type, desc, amount] of [
     ["DebtRecovery", "DebtPayment", 46.8],
