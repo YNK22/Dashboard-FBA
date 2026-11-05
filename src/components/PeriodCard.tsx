@@ -103,7 +103,7 @@ export default function PeriodCard({
 
         {s.missingCogsUnits > 0 && (
           <div className="note warn-text">
-            ⚠ {fmtInt(s.missingCogsUnits)} unité(s) sans prix d&apos;achat — <a href="/produits">à compléter</a>
+            ⚠ {fmtInt(s.missingCogsUnits)} unité(s) sans prix d&apos;achat — <a href="/produits#a-completer">à compléter</a>
           </div>
         )}
 

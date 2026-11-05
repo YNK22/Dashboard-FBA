@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { fmtEur, fmtInt } from "@/components/format";
 import LotsPanel from "@/components/LotsPanel";
+import MissingCostsPanel from "@/components/MissingCostsPanel";
 
 interface Row {
   sku: string;
@@ -19,6 +20,16 @@ export default function ProduitsPage() {
   const [edits, setEdits] = useState<Record<string, { cogs: string; extra: string }>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [vatRegistered, setVatRegistered] = useState(false);
+  const [lotsKey, setLotsKey] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/settings", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setVatRegistered(Boolean(j.vatRegistered)))
+      .catch(() => {});
+  }, []);
+  const unit = vatRegistered ? "HT" : "TTC";
 
   const load = () =>
     fetch("/api/cogs", { cache: "no-store" })
@@ -69,13 +80,21 @@ export default function ProduitsPage() {
         <div>
           <h1>Coûts d&apos;achat</h1>
           <div className="page-sub">
-            Montants <strong>HT</strong> (TTC si vous n&apos;êtes pas assujetti à la TVA). Le coût de chaque vente vient du lot consommé (FIFO), sinon du prix
-            par défaut du produit.
+            Montants <strong>{vatRegistered ? "HT" : "TTC, tels que payés (micro-entreprise)"}</strong>. Le coût de chaque vente vient du lot consommé (FIFO),
+            sinon du prix par défaut du produit.
           </div>
         </div>
       </div>
 
-      <LotsPanel />
+      <MissingCostsPanel
+        vatRegistered={vatRegistered}
+        onSaved={() => {
+          setLotsKey((k) => k + 1);
+          load();
+        }}
+      />
+
+      <LotsPanel key={lotsKey} unit={unit} />
 
       <section className="panel">
         <div className="panel-head">

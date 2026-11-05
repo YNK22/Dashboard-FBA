@@ -83,7 +83,7 @@ export function parseLotsCsv(text: string) {
   return { lots, skipped };
 }
 
-export default function LotsPanel() {
+export default function LotsPanel({ unit = "HT" }: { unit?: "HT" | "TTC" }) {
   const [rows, setRows] = useState<LotRow[]>([]);
   const [missing, setMissing] = useState(0);
   const [onlyMissing, setOnlyMissing] = useState(false);
@@ -154,7 +154,7 @@ export default function LotsPanel() {
         </button>
       </div>
       <p className="note" style={{ marginTop: 0 }}>
-        Chaque vente consomme le lot le plus ancien de son SKU. Les lots sont créés automatiquement à partir de vos envois FBA : complétez leur coût unitaire HT
+        Chaque vente consomme le lot le plus ancien de son SKU. Les lots sont créés automatiquement à partir de vos envois FBA : complétez leur coût unitaire {unit}
         tout compris (achat + prep + transport). Sans lot, le prix d&apos;achat par défaut ci-dessous est utilisé.
       </p>
       {missing > 0 && <div className="banner">⚠ {missing} lot(s) sans coût unitaire.</div>}
@@ -196,7 +196,7 @@ export default function LotsPanel() {
               <th>Origine</th>
               <th>Quantité</th>
               <th>Restant</th>
-              <th>Coût unit. HT</th>
+              <th>Coût unit. {unit}</th>
               <th />
             </tr>
           </thead>
@@ -270,7 +270,7 @@ export default function LotsPanel() {
           <input inputMode="numeric" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} required style={{ width: 90 }} />
         </label>
         <label>
-          Coût unit. HT
+          Coût unit. {unit}
           <input inputMode="decimal" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} style={{ width: 100 }} />
         </label>
         <button className="btn" type="submit">
