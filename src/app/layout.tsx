@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import Nav from "@/components/Nav";
+import Nav, { MobileNav } from "@/components/Nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -29,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <main className="page">{children}</main>
+        <MobileNav />
       </body>
     </html>
   );

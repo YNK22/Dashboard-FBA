@@ -1,9 +1,27 @@
 /**
- * Synchronisation automatique : tant que le serveur tourne, on interroge Amazon
- * toutes les SYNC_INTERVAL_MINUTES minutes.
+ * Tâches de fond, tant que le serveur tourne :
+ * - synchronisation Amazon toutes les SYNC_INTERVAL_MINUTES minutes ;
+ * - scraping : runs automatiques des sources arrivées à échéance (vérifié toutes les 5 min).
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+
+  const { markInterruptedRuns, scheduleDueScrapes } = await import("./lib/scraper/run");
+  try {
+    markInterruptedRuns();
+  } catch (e) {
+    console.error("[scraping]", e);
+  }
+  const scrapeTick = () => {
+    try {
+      scheduleDueScrapes();
+    } catch (e) {
+      console.error("[scraping auto]", e);
+    }
+  };
+  setTimeout(scrapeTick, 30_000);
+  setInterval(scrapeTick, 5 * 60_000);
+
   const { getConfig, hasAmazonCredentials } = await import("./lib/config");
   const cfg = getConfig();
   if (!hasAmazonCredentials(cfg) || cfg.syncIntervalMinutes <= 0) return;

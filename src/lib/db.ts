@@ -132,6 +132,51 @@ CREATE TABLE IF NOT EXISTS inventory (
   updated_at      TEXT
 );
 
+-- Scraping : sites fournisseurs à parcourir, historique des passages, produits trouvés
+CREATE TABLE IF NOT EXISTS scrape_sources (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL,
+  base_url      TEXT NOT NULL,
+  mode          TEXT NOT NULL DEFAULT 'hybrid',   -- sitemap | crawl | hybrid
+  start_urls    TEXT,                             -- une URL par ligne (sitemaps ou pages catégorie)
+  url_pattern   TEXT,                             -- filtre facultatif des URLs produit (texte ou expression régulière)
+  interval_days INTEGER NOT NULL DEFAULT 21,
+  auto          INTEGER NOT NULL DEFAULT 1,
+  max_pages     INTEGER NOT NULL DEFAULT 2000,
+  delay_ms      INTEGER NOT NULL DEFAULT 1000,
+  next_run_at   TEXT,
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scrape_runs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id     INTEGER NOT NULL,
+  started_at    TEXT NOT NULL,
+  finished_at   TEXT,
+  status        TEXT NOT NULL,                    -- running | success | error | cancelled | interrupted
+  pages_seen    INTEGER NOT NULL DEFAULT 0,
+  offers_seen   INTEGER NOT NULL DEFAULT 0,       -- fiches produit lues
+  new_products  INTEGER NOT NULL DEFAULT 0,       -- EAN jamais vus (toutes sources)
+  new_offers    INTEGER NOT NULL DEFAULT 0,       -- URLs produit nouvelles pour cette source
+  errors        INTEGER NOT NULL DEFAULT 0,
+  message       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_scrape_runs_source ON scrape_runs(source_id, started_at);
+
+CREATE TABLE IF NOT EXISTS scrape_products (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id   INTEGER NOT NULL,
+  url         TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  ean         TEXT,
+  price       REAL,
+  currency    TEXT,
+  first_seen  TEXT NOT NULL,
+  last_seen   TEXT NOT NULL,
+  UNIQUE(source_id, url)
+);
+CREATE INDEX IF NOT EXISTS idx_scrape_products_ean ON scrape_products(ean);
+
 CREATE TABLE IF NOT EXISTS kv (
   key   TEXT PRIMARY KEY,
   value TEXT
