@@ -2,7 +2,7 @@ import dns from "node:dns/promises";
 import net from "node:net";
 import zlib from "node:zlib";
 import { getDb } from "../db";
-import { extractLinks, extractProduct, normalizeUrl, parseRobots, parseSitemap, robotsAllows, sameSite, type Robots } from "./extract";
+import { extractLinks, extractProduct, isBotChallenge, normalizeUrl, parseRobots, parseSitemap, robotsAllows, sameSite, type Robots } from "./extract";
 
 /**
  * Moteur de scraping : une source à la fois (file d'attente), en arrière-plan sur le serveur.
@@ -242,6 +242,7 @@ async function runSource(src: ScrapeSource): Promise<void> {
           const r = await fetchText(sm, "application/xml,text/xml");
           if (r.status !== 200) {
             p.errors++;
+            message = `Sitemap introuvable (HTTP ${r.status}) : ${sm}`;
             continue;
           }
           const parsed = parseSitemap(r.text);
@@ -285,6 +286,7 @@ async function runSource(src: ScrapeSource): Promise<void> {
     // 3. Visite des pages
     p.phase = "Lecture des pages";
     const crawl = src.mode !== "sitemap";
+    let challenges = 0;
     while (p.pages < src.max_pages && !p.cancel) {
       const url = productQueue.shift() ?? (crawl ? pageQueue.shift() : undefined);
       if (!url) break;
@@ -295,7 +297,21 @@ async function runSource(src: ScrapeSource): Promise<void> {
         const r = await fetchText(url);
         if (r.status >= 400) {
           p.errors++;
-          if (r.status === 403 || r.status === 429 || r.status === 503) message = `Le site refuse l'accès (HTTP ${r.status}) : protection anti-robots ?`;
+          message =
+            r.status === 403 || r.status === 429 || r.status === 503
+              ? `Le site refuse l'accès (HTTP ${r.status}) : protection anti-robots ?`
+              : `HTTP ${r.status} : ${url}`;
+        } else if (isBotChallenge(r.text) && !extractProduct(r.text, r.url)) {
+          // Page de vérification anti-robots : inutile d'insister
+          p.errors++;
+          challenges++;
+          message =
+            "Le site affiche une vérification anti-robots (Cloudflare, DataDome…) au lieu de ses pages : il ne peut pas être lu par le scraping. " +
+            "Cherchez plutôt un flux produits officiel (affiliation, flux fournisseur).";
+          if (challenges >= 2 || p.pages <= 2) {
+            status = "error";
+            break;
+          }
         } else if (/html|xml/i.test(r.type) || r.text.trimStart().startsWith("<")) {
           const prod = extractProduct(r.text, r.url);
           if (prod) {

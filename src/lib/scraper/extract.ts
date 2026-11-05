@@ -193,6 +193,21 @@ function microdataEan(html: string): string | null {
   return null;
 }
 
+/* ---------- Pages anti-robots ---------- */
+
+// Signatures propres aux pages de vérification (pas les scripts de protection chargés sur des pages normales)
+const CHALLENGE = /cf-chl|\/cdn-cgi\/challenge-platform|<title>Just a moment\.\.\.|Attention Required! \| Cloudflare|captcha-delivery\.com|px-captcha|Request unsuccessful\. Incapsula|__blnCh/i;
+
+/**
+ * Page de vérification anti-robots (Cloudflare, DataDome, PerimeterX…) ou page vide remplie par JavaScript :
+ * le contenu réel n'est pas lisible sans navigateur.
+ */
+export function isBotChallenge(html: string): boolean {
+  if (CHALLENGE.test(html.slice(0, 200_000))) return true;
+  const links = (html.match(/<a\b/gi) ?? []).length;
+  return links <= 1 && html.length < 40_000 && /<script/i.test(html) && !/application\/ld\+json/i.test(html);
+}
+
 /* ---------- Liens ---------- */
 
 const SKIP_EXT = /\.(jpe?g|png|gif|webp|svg|ico|pdf|zip|gz|css|js|json|mp4|mp3|webm|woff2?|ttf|eot|xml|txt|csv|xlsx?|docx?)(\?|$)/i;

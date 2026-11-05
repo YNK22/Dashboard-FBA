@@ -77,3 +77,18 @@ test("filtre d'URL produit : texte simple ou expression régulière", () => {
   assert.equal(urlFilter("-p\\d+\\.html$")("https://s.fr/cle.html"), false);
   assert.equal(urlFilter("")("https://s.fr/x"), true);
 });
+
+test("page anti-robots détectée, vraie page non", async () => {
+  const { isBotChallenge } = await import("../src/lib/scraper/extract");
+  assert.equal(isBotChallenge("<html><title>Just a moment...</title><script src='/cdn-cgi/challenge-platform/x.js'></script></html>"), true);
+  assert.equal(isBotChallenge("<!doctype html><html><head><title>Cdiscount</title><script>var x=1</script></head><body><a href='/'>x</a></body></html>"), true);
+  const real = `<html><a href="/c/1">1</a><a href="/c/2">2</a><a href="/p/3">3</a><script>analytics()</script></html>`;
+  assert.equal(isBotChallenge(real), false);
+});
+
+test("page normale avec reCAPTCHA (newsletter) ou script DataDome : pas une page anti-robots", async () => {
+  const { isBotChallenge } = await import("../src/lib/scraper/extract");
+  const page = `<html><script src="https://js.datadome.co/tags.js"></script><a href="/c/1">1</a><a href="/c/2">2</a>
+    <form><div class="g-recaptcha"></div></form></html>`;
+  assert.equal(isBotChallenge(page), false);
+});
