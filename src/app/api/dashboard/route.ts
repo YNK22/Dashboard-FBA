@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getConfig, hasAmazonCredentials } from "@/lib/config";
 import { kvGet } from "@/lib/db";
-import { dashboardCards } from "@/lib/queries";
+import { dashboardCards, urssafRate } from "@/lib/queries";
 import { readScope } from "@/lib/range";
 import { isSyncRunning, lastSync } from "@/lib/sync";
 
@@ -17,6 +17,7 @@ export function GET(req: NextRequest) {
     demo: kvGet("demo") === "1",
     connected: hasAmazonCredentials(cfg),
     vatRegistered: cfg.vatRegistered,
+    urssafRate: urssafRate(cfg), // fraction
     marketplaces: cfg.marketplaces.map((m) => m.code),
     sync: { running: isSyncRunning(), lastOkAt, lastError: last && !last.ok ? last.error : null, warnings: last?.warnings ?? [] },
   });

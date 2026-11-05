@@ -13,16 +13,18 @@ interface DashboardData {
   demo: boolean;
   connected: boolean;
   vatRegistered: boolean;
+  urssafRate: number;
   marketplaces: string[];
   sync: { running: boolean; lastOkAt: string | null; lastError: string | null; warnings: string[] };
 }
 
 const TAB_LABELS: Record<Card["key"], string> = {
-  today: "Aujourd'hui",
+  today: "Auj.",
   yesterday: "Hier",
   month: "Mois",
   lastMonth: "M-1",
   forecast: "Prévi.",
+  all: "Tout",
 };
 
 const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -123,12 +125,12 @@ export default function Dashboard() {
 
       <div className="cards">
         {data
-          ? data.cards.map((c) => <PeriodCard key={c.key} card={c} active={tab === c.key} vatRegistered={data.vatRegistered} />)
+          ? data.cards.map((c) => <PeriodCard key={c.key} card={c} active={tab === c.key} vatRegistered={data.vatRegistered} urssafRate={data.urssafRate ?? 0} />)
           : !error && <div className="muted">Chargement…</div>}
       </div>
 
-      <BreakdownPanel refreshKey={data?.generatedAt} mkt={mkt} />
-      <ChartPanel refreshKey={data?.generatedAt} mkt={mkt} />
+      <BreakdownPanel refreshKey={data?.generatedAt} mkt={mkt} onSettingsChange={load} />
+      <ChartPanel refreshKey={data?.generatedAt} mkt={mkt} urssaf={(data?.urssafRate ?? 0) > 0} />
       <ProductsPanel refreshKey={data?.generatedAt} mkt={mkt} />
     </>
   );
@@ -136,16 +138,16 @@ export default function Dashboard() {
 
 /* ---------------- Graphique Mois / Année ---------------- */
 
-function ChartPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | null }) {
+function ChartPanel({ refreshKey, mkt, urssaf }: { refreshKey?: string; mkt: string | null; urssaf: boolean }) {
   const now = new Date();
-  const [mode, setMode] = useState<"month" | "year">("month");
+  const [mode, setMode] = useState<"month" | "year" | "all">("month");
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
-  const [metric, setMetric] = useState<"salesTtc" | "netProfit">("salesTtc");
+  const [metric, setMetric] = useState<"salesTtc" | "netProfit" | "netAfterUrssaf">("salesTtc");
   const [points, setPoints] = useState<ChartPoint[]>([]);
 
   useEffect(() => {
-    const qs = (mode === "month" ? `year=${year}&month=${month}` : `year=${year}`) + (mkt ? `&mkt=${mkt}` : "");
+    const qs = (mode === "all" ? "all=1" : mode === "month" ? `year=${year}&month=${month}` : `year=${year}`) + (mkt ? `&mkt=${mkt}` : "");
     fetch(`/api/chart?${qs}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => setPoints(j.points ?? []))
@@ -168,10 +170,15 @@ function ChartPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | nu
   };
 
   const totals = useMemo(
-    () => points.reduce((a, p) => ({ sales: a.sales + p.salesTtc, profit: a.profit + p.netProfit, orders: a.orders + p.orders }), { sales: 0, profit: 0, orders: 0 }),
+    () =>
+      points.reduce(
+        (a, p) => ({ sales: a.sales + p.salesTtc, profit: a.profit + p.netProfit, after: a.after + p.netAfterUrssaf, orders: a.orders + p.orders }),
+        { sales: 0, profit: 0, after: 0, orders: 0 },
+      ),
     [points],
   );
-  const title = mode === "month" ? `${MONTHS[month - 1]} ${year}` : String(year);
+  const title = mode === "all" ? "depuis le début" : mode === "month" ? `${MONTHS[month - 1]} ${year}` : String(year);
+  const metricLabel = metric === "salesTtc" ? "CA TTC" : metric === "netProfit" ? "Bénéfice net" : "Après URSSAF";
 
   return (
     <section className="panel">
@@ -183,15 +190,22 @@ function ChartPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | nu
           <button aria-pressed={mode === "year"} onClick={() => setMode("year")}>
             Année
           </button>
+          <button aria-pressed={mode === "all"} onClick={() => setMode("all")}>
+            Tout
+          </button>
         </div>
         <div className="chart-nav">
-          <button className="icon-btn" onClick={() => shift(-1)} aria-label="Période précédente">
-            ‹
-          </button>
+          {mode !== "all" && (
+            <button className="icon-btn" onClick={() => shift(-1)} aria-label="Période précédente">
+              ‹
+            </button>
+          )}
           <span className="chart-title">Évolution · {title}</span>
-          <button className="icon-btn" onClick={() => shift(1)} aria-label="Période suivante">
-            ›
-          </button>
+          {mode !== "all" && (
+            <button className="icon-btn" onClick={() => shift(1)} aria-label="Période suivante">
+              ›
+            </button>
+          )}
         </div>
         <div className="segmented">
           <button aria-pressed={metric === "salesTtc"} onClick={() => setMetric("salesTtc")}>
@@ -200,16 +214,29 @@ function ChartPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | nu
           <button aria-pressed={metric === "netProfit"} onClick={() => setMetric("netProfit")}>
             Bénéfice net
           </button>
+          {urssaf && (
+            <button aria-pressed={metric === "netAfterUrssaf"} onClick={() => setMetric("netAfterUrssaf")}>
+              Après URSSAF
+            </button>
+          )}
         </div>
       </div>
       <div className="chart-total num">
-        {metric === "salesTtc" ? "CA TTC" : "Bénéfice net"} {mode === "month" ? "par jour" : "par mois"} · total {fmtEur(totals.sales)} TTC ·{" "}
-        <span className={signClass(totals.profit)}>{fmtEur(totals.profit)}</span> de bénéfice · {fmtInt(totals.orders)} commandes
+        {metricLabel} {mode === "month" ? "par jour" : "par mois"} · total {fmtEur(totals.sales)} TTC ·{" "}
+        <span className={signClass(totals.profit)}>{fmtEur(totals.profit)}</span> de bénéfice
+        {urssaf && (
+          <>
+            {" "}
+            · <span className={signClass(totals.after)}>{fmtEur(totals.after)}</span> après URSSAF
+          </>
+        )}{" "}
+        · {fmtInt(totals.orders)} commandes
       </div>
       <BarChart
         points={points}
         metric={metric}
-        longLabel={(p) => (mode === "month" ? `${Number(p.key.slice(8))} ${MONTHS[month - 1]}` : `${MONTHS[Number(p.key.slice(5)) - 1]} ${year}`)}
+        showUrssaf={urssaf}
+        longLabel={(p) => (mode === "month" ? `${Number(p.key.slice(8))} ${MONTHS[month - 1]}` : `${MONTHS[Number(p.key.slice(5, 7)) - 1]} ${p.key.slice(0, 4)}`)}
       />
     </section>
   );
@@ -217,7 +244,7 @@ function ChartPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | nu
 
 /* ---------------- Rentabilité par produit ---------------- */
 
-type RangeKey = "today" | "yesterday" | "7d" | "month" | "lastMonth" | "30d" | "90d";
+type RangeKey = "today" | "yesterday" | "7d" | "month" | "lastMonth" | "30d" | "90d" | "year" | "all";
 
 function rangeFor(key: RangeKey): { from: string; to: string } {
   const now = new Date();
@@ -237,6 +264,10 @@ function rangeFor(key: RangeKey): { from: string; to: string } {
       return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: d(0) };
     case "lastMonth":
       return { from: ymd(new Date(now.getFullYear(), now.getMonth() - 1, 1)), to: ymd(new Date(now.getFullYear(), now.getMonth(), 0)) };
+    case "year":
+      return { from: `${now.getFullYear()}-01-01`, to: d(0) };
+    case "all":
+      return { from: "2015-01-01", to: d(0) };
   }
 }
 
@@ -282,6 +313,8 @@ function ProductsPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string |
           <option value="lastMonth">Mois dernier</option>
           <option value="30d">30 derniers jours</option>
           <option value="90d">90 derniers jours</option>
+          <option value="year">Cette année</option>
+          <option value="all">Depuis le début</option>
         </select>
       </div>
       {view === "countries" ? (

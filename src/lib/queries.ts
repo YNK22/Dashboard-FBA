@@ -1,5 +1,5 @@
 import { getConfig, vatRateFor, type AppConfig } from "./config";
-import { getDb } from "./db";
+import { getDb, kvGet } from "./db";
 import { currentUnitCost, loadFifo } from "./fifo";
 import {
   computeSummary,
@@ -33,6 +33,19 @@ import {
 /* ---------------------------------------------------------------------------
  * Chargement des données depuis SQLite
  * ------------------------------------------------------------------------- */
+
+/**
+ * Taux de cotisations URSSAF (fraction du CA encaissé) : réglé depuis le dashboard (kv « urssaf_rate »),
+ * sinon variable URSSAF_RATE. 0 = pas de calcul.
+ */
+export function urssafRate(cfg: AppConfig = getConfig()): number {
+  const v = Number(kvGet("urssaf_rate"));
+  return kvGet("urssaf_rate") !== null && Number.isFinite(v) ? Math.max(0, v) / 100 : cfg.urssafRate;
+}
+
+function taxOf(cfg: AppConfig) {
+  return { vatRegistered: cfg.vatRegistered, feesVatRate: cfg.feesVatRate, urssafRate: urssafRate(cfg) };
+}
 
 /** Configuration + filtre optionnel sur une marketplace (ID Amazon). */
 export type Scope = AppConfig & { mkt?: string | null };
@@ -339,10 +352,7 @@ export function loadOtherCosts(range: Range, cfg: Scope = getConfig()): OtherCos
 }
 
 export function summarize(range: Range, cfg: Scope = getConfig()): Summary {
-  return computeSummary(loadSales(range, cfg), loadRefunds(range, cfg), loadOtherCosts(range, cfg), {
-    vatRegistered: cfg.vatRegistered,
-    feesVatRate: cfg.feesVatRate,
-  });
+  return computeSummary(loadSales(range, cfg), loadRefunds(range, cfg), loadOtherCosts(range, cfg), taxOf(cfg));
 }
 
 /* ---------------------------------------------------------------------------
@@ -397,6 +407,7 @@ export interface ProfitBreakdown {
   vatRegistered: boolean;
   sections: BreakdownSection[];
   feeVat: number; // TVA payée à Amazon sur ses frais (incluse dans les montants ci-dessus si non assujetti)
+  urssafRate: number; // fraction du CA encaissé (0 = non calculé)
 }
 
 const r2b = (n: number) => Math.round(n * 100) / 100;
@@ -417,7 +428,7 @@ export function profitBreakdown(range: Range, cfg: Scope = getConfig()): ProfitB
   const sales = loadSales(range, cfg);
   const refunds = loadRefunds(range, cfg);
   const others = loadOtherCosts(range, cfg);
-  const summary = computeSummary(sales, refunds, others, { vatRegistered: cfg.vatRegistered, feesVatRate: cfg.feesVatRate });
+  const summary = computeSummary(sales, refunds, others, taxOf(cfg));
   const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
   let feeVat = 0;
 
@@ -483,7 +494,7 @@ export function profitBreakdown(range: Range, cfg: Scope = getConfig()): ProfitB
     { key: "refunds", title: "Remboursements et retours", total: -summary.refundCost, lines: refundLines },
     { key: "other", title: "Autres frais et crédits Amazon", total: -summary.otherCosts, lines: linesFrom(other) },
   ];
-  return { summary, vatRegistered: cfg.vatRegistered, sections, feeVat: r2b(feeVat) };
+  return { summary, vatRegistered: cfg.vatRegistered, sections, feeVat: r2b(feeVat), urssafRate: urssafRate(cfg) };
 }
 
 const fmtUnits = (n: number) => String(Math.round(n));
@@ -493,7 +504,7 @@ const fmtUnits = (n: number) => String(Math.round(n));
  * ------------------------------------------------------------------------- */
 
 export interface Card {
-  key: "today" | "yesterday" | "month" | "lastMonth" | "forecast";
+  key: "today" | "yesterday" | "month" | "lastMonth" | "forecast" | "all";
   title: string;
   subtitle: string;
   live?: boolean;
@@ -539,6 +550,10 @@ export function dashboardCards(now = new Date(), cfg: Scope = getConfig()): Card
   const elapsedDays = (now.getTime() - monthStart.getTime()) / 86_400_000;
   const forecast = forecastMonth(mS, recent, 14, elapsedDays, dim);
 
+  // Depuis la première vente
+  const first = firstSaleDate();
+  const allS = summarize({ from: first ? startOfDay(toYMD(first, tz), tz) : todayStart, to: now }, cfg);
+
   const weekday = FR_WEEKDAYS[weekdayOf(today)];
   const ywd = FR_WEEKDAYS[weekdayOf(yesterday)];
   const mName = FR_MONTHS[today.m - 1];
@@ -581,7 +596,27 @@ export function dashboardCards(now = new Date(), cfg: Scope = getConfig()): Card
       summary: forecast,
       compare: { pct: pctChange(forecast.salesTtc, lmS.salesTtc), label: `vs ${pmName}`, previousSales: lmS.salesTtc },
     },
+    {
+      key: "all",
+      title: "Depuis le début",
+      subtitle: first ? `depuis le ${formatDayFr(toYMD(first, tz))}` : "aucune vente",
+      summary: allS,
+      compare: null,
+    },
   ];
+}
+
+/** Début de l'activité : première commande ou premier frais Amazon (abonnement payé avant la 1re vente...). */
+export function firstSaleDate(): Date | null {
+  const row = getDb()
+    .prepare(
+      `SELECT MIN(d) AS d FROM (
+         SELECT MIN(purchase_date) AS d FROM orders WHERE status != 'CANCELLED'
+         UNION ALL SELECT MIN(posted_date) FROM finance_lines WHERE ${ACTIVE_FIN}
+         UNION ALL SELECT MIN(date) FROM expenses)`,
+    )
+    .get() as { d: string | null };
+  return row.d ? new Date(row.d) : null;
 }
 
 export interface ChartPoint {
@@ -589,15 +624,21 @@ export interface ChartPoint {
   label: string;
   salesTtc: number;
   netProfit: number;
+  netAfterUrssaf: number;
   orders: number;
   units: number;
   future?: boolean;
 }
 
-/** Série journalière (mois) ou mensuelle (année). */
-export function chartSeries(period: { year: number; month?: number }, now = new Date(), cfg: Scope = getConfig()): ChartPoint[] {
+/** Série journalière (mois), mensuelle (année) ou mensuelle depuis la première vente (all). */
+export function chartSeries(period: { year: number; month?: number; all?: boolean }, now = new Date(), cfg: Scope = getConfig()): ChartPoint[] {
   const tz = cfg.timezone;
-  const range = period.month ? monthRange(period.year, period.month, tz) : yearRange(period.year, tz);
+  const first = period.all ? toYMD(firstSaleDate() ?? now, tz) : null;
+  const range = first
+    ? { from: startOfDay({ ...first, d: 1 }, tz), to: now }
+    : period.month
+      ? monthRange(period.year, period.month, tz)
+      : yearRange(period.year, tz);
   const sales = loadSales(range, cfg);
   const refunds = loadRefunds(range, cfg);
   const others = loadOtherCosts(range, cfg);
@@ -623,9 +664,14 @@ export function chartSeries(period: { year: number; month?: number }, now = new 
     }
   } else {
     const short = ["janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc"];
-    for (let m = 1; m <= 12; m++) keys.push({ key: `${period.year}-${String(m).padStart(2, "0")}`, label: short[m - 1] });
+    if (first) {
+      const end = toYMD(now, tz);
+      for (let ym = { ...first, d: 1 }; ym.y < end.y || (ym.y === end.y && ym.m <= end.m); ym = addMonths(ym, 1)) {
+        keys.push({ key: `${ym.y}-${String(ym.m).padStart(2, "0")}`, label: `${short[ym.m - 1]}${ym.m === 1 || keys.length === 0 ? ` ${String(ym.y).slice(2)}` : ""}` });
+      }
+    } else for (let m = 1; m <= 12; m++) keys.push({ key: `${period.year}-${String(m).padStart(2, "0")}`, label: short[m - 1] });
   }
-  const tax = { vatRegistered: cfg.vatRegistered, feesVatRate: cfg.feesVatRate };
+  const tax = taxOf(cfg);
   return keys.map(({ key, label }) => {
     const s = computeSummary(gs.get(key) ?? [], gr.get(key) ?? [], go.get(key) ?? [], tax);
     return {
@@ -633,9 +679,10 @@ export function chartSeries(period: { year: number; month?: number }, now = new 
       label,
       salesTtc: s.salesTtc,
       netProfit: s.netProfit,
+      netAfterUrssaf: s.netAfterUrssaf,
       orders: s.orders,
       units: s.units,
-      future: period.month ? key > nowKey : key > nowKey.slice(0, 7),
+      future: period.month && !first ? key > nowKey : key > nowKey.slice(0, 7),
     };
   });
 }
@@ -670,7 +717,7 @@ export function productBreakdown(range: Range, cfg: Scope = getConfig()): Produc
     const k = r.sku ?? "(sans SKU)";
     refundsBySku.set(k, [...(refundsBySku.get(k) ?? []), r]);
   }
-  const tax = { vatRegistered: cfg.vatRegistered, feesVatRate: cfg.feesVatRate };
+  const tax = taxOf(cfg);
   const skus = new Set([...bySku.keys(), ...refundsBySku.keys()]);
   return [...skus]
     .map((sku) => {

@@ -86,6 +86,8 @@ export function getConfig() {
     reorderDays: envNumber("REORDER_DAYS", 30), // alerte « à réassortir » sous ce nombre de jours de stock
     targetStockDays: envNumber("TARGET_STOCK_DAYS", 60), // couverture visée pour la quantité à commander
     overstockDays: envNumber("OVERSTOCK_DAYS", 180),
+    // Micro-entreprise : taux de cotisations sociales sur le CA encaissé (modifiable aussi depuis le dashboard)
+    urssafRate: envNumber("URSSAF_RATE", 0) / 100,
   };
 }
 

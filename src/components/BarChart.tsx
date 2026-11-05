@@ -4,10 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import type { ChartPoint } from "@/lib/queries";
 import { compactEur, fmtEur, fmtInt } from "./format";
 
-type Metric = "salesTtc" | "netProfit";
+type Metric = "salesTtc" | "netProfit" | "netAfterUrssaf";
 
 /** Histogramme simple en SVG (une série, axe unique, infobulle au survol). */
-export default function BarChart({ points, metric, longLabel }: { points: ChartPoint[]; metric: Metric; longLabel: (p: ChartPoint) => string }) {
+export default function BarChart({
+  points,
+  metric,
+  longLabel,
+  showUrssaf = false,
+}: {
+  points: ChartPoint[];
+  metric: Metric;
+  longLabel: (p: ChartPoint) => string;
+  showUrssaf?: boolean;
+}) {
   const [hover, setHover] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(1000);
@@ -83,6 +93,12 @@ export default function BarChart({ points, metric, longLabel }: { points: ChartP
           <br />
           Bénéfice net : {fmtEur(hp.netProfit)}
           <br />
+          {showUrssaf && (
+            <>
+              Après URSSAF : {fmtEur(hp.netAfterUrssaf)}
+              <br />
+            </>
+          )}
           {fmtInt(hp.orders)} cmd · {fmtInt(hp.units)} unités
         </div>
       )}

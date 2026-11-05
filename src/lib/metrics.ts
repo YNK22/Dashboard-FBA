@@ -12,6 +12,8 @@
  *   Bénéfice net    = bénéfice brut − coût des remboursements − coûts divers
  *   Marge           = bénéfice net / CA HT
  *   ROI             = bénéfice net / coût d'achat
+ *   Cotisations     = taux URSSAF × CA encaissé (ventes − montants remboursés aux clients), micro-entreprise
+ *   Reste           = bénéfice net − cotisations
  *
  * Si vous n'êtes pas assujetti à la TVA (VAT_REGISTERED=false, micro-entreprise), la TVA n'est pas déduite :
  * le calcul se fait sur le CA TTC, et les frais Amazon sont comptés TVA comprise, avec la TVA réellement
@@ -56,6 +58,7 @@ export interface OtherCost {
 export interface TaxSettings {
   vatRegistered: boolean;
   feesVatRate: number; // fraction, ex 0.2 (sert seulement aux estimations HT de l'API Product Fees)
+  urssafRate?: number; // fraction du CA encaissé, ex 0.124 (0 = non calculé)
 }
 
 export interface Summary {
@@ -79,6 +82,9 @@ export interface Summary {
   pendingSalesTtc: number;
   estimatedFeesSalesTtc: number; // CA dont les frais sont estimés (pas encore réglés)
   missingCogsUnits: number; // unités vendues sans prix d'achat renseigné
+  urssafBase: number; // CA encaissé servant de base aux cotisations (ventes − remboursements)
+  urssaf: number; // cotisations sociales estimées (micro-entreprise)
+  netAfterUrssaf: number; // bénéfice net − cotisations
 }
 
 export const PENDING_STATUSES = new Set(["PENDING", "PENDING_AVAILABILITY", "UNSHIPPED"]);
@@ -107,6 +113,9 @@ export function emptySummary(): Summary {
     pendingSalesTtc: 0,
     estimatedFeesSalesTtc: 0,
     missingCogsUnits: 0,
+    urssafBase: 0,
+    urssaf: 0,
+    netAfterUrssaf: 0,
   };
 }
 
@@ -135,12 +144,14 @@ export function computeSummary(sales: SaleLine[], refunds: RefundLine[], others:
   s.grossProfit = s.salesHt - s.amazonFees - s.cogs;
 
   const refundKeys = new Set<string>();
+  let refundBase = 0;
   for (const r of refunds) {
     refundKeys.add(r.orderId ?? `${r.date}-${r.sku}`);
     s.refundUnits += r.quantity;
     s.refundAmountTtc += r.refundTtc;
-    const refundBase = r.refundTtc - (tax.vatRegistered ? r.vatBack : 0);
-    s.refundCost += refundBase - r.feesNet - r.cogsRecovered;
+    const base = r.refundTtc - (tax.vatRegistered ? r.vatBack : 0);
+    refundBase += base;
+    s.refundCost += base - r.feesNet - r.cogsRecovered;
   }
   s.refunds = refundKeys.size;
 
@@ -149,6 +160,10 @@ export function computeSummary(sales: SaleLine[], refunds: RefundLine[], others:
   }
 
   s.netProfit = s.grossProfit - s.refundCost - s.otherCosts;
+  // Micro-entreprise : cotisations sur le CA encaissé (montants remboursés aux clients déduits)
+  s.urssafBase = Math.max(0, s.salesHt - refundBase);
+  s.urssaf = s.urssafBase * (tax.urssafRate ?? 0);
+  s.netAfterUrssaf = s.netProfit - s.urssaf;
   const base = tax.vatRegistered ? s.salesHt : s.salesTtc;
   s.margin = base > 0 ? s.netProfit / base : null;
   s.roi = s.cogs > 0 ? s.netProfit / s.cogs : null;
@@ -188,6 +203,9 @@ export function forecastMonth(mtd: Summary, recentDaily: Summary, recentDays: nu
     "refundCost",
     "otherCosts",
     "netProfit",
+    "urssafBase",
+    "urssaf",
+    "netAfterUrssaf",
   ];
   for (const key of keys) (f[key] as number) = r2((mtd[key] as number) + (recentDaily[key] as number) * k);
   f.orders = Math.round(f.orders);

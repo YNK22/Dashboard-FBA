@@ -4,8 +4,11 @@ import { readScope } from "@/lib/range";
 
 export const dynamic = "force-dynamic";
 
-// /api/chart?year=2026&month=10  (jours du mois)  ou  /api/chart?year=2026  (mois de l'année)
+// /api/chart?year=2026&month=10 (jours du mois), /api/chart?year=2026 (mois de l'année), /api/chart?all=1 (mois depuis la 1re vente)
 export function GET(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("all") === "1") {
+    return NextResponse.json({ points: chartSeries({ year: 0, all: true }, new Date(), readScope(req)) });
+  }
   const year = Number(req.nextUrl.searchParams.get("year"));
   const monthParam = req.nextUrl.searchParams.get("month");
   const month = monthParam ? Number(monthParam) : undefined;

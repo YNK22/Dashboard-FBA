@@ -355,15 +355,16 @@ select {
 }
 .mobile-tabs button {
   flex: 1;
-  padding: 9px 4px;
-  font-size: 14px;
+  padding: 9px 2px;
+  font-size: 13px;
+  min-width: 0;
 }
 
 /* ---------- Cartes de période ---------- */
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -667,7 +668,7 @@ input.cell.missing {
 
 /* ---------- Responsive ---------- */
 
-@media (max-width: 1180px) {
+@media (max-width: 1400px) {
   .cards {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -772,4 +773,19 @@ input.cell.missing {
   color: inherit;
   cursor: pointer;
   text-align: left;
+}
+.urssaf-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 12px;
+  font-size: 14px;
+}
+.urssaf-setting input {
+  width: 72px;
+  text-align: right;
+}
+.urssaf-setting .note {
+  flex-basis: 100%;
 }

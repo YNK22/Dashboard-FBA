@@ -4,7 +4,17 @@ import { useState } from "react";
 import type { Card } from "@/lib/queries";
 import { fmtEur, fmtInt, fmtPct, fmtPct0, signClass, splitEur } from "./format";
 
-export default function PeriodCard({ card, active, vatRegistered }: { card: Card; active: boolean; vatRegistered: boolean }) {
+export default function PeriodCard({
+  card,
+  active,
+  vatRegistered,
+  urssafRate = 0,
+}: {
+  card: Card;
+  active: boolean;
+  vatRegistered: boolean;
+  urssafRate?: number;
+}) {
   const [open, setOpen] = useState(false);
   const s = card.summary;
   const hero = splitEur(s.salesTtc);
@@ -66,10 +76,17 @@ export default function PeriodCard({ card, active, vatRegistered }: { card: Card
             <div className="label">Rembours.</div>
             <div className="value num">{fmtInt(s.refunds)}</div>
           </div>
-          <div className="kpi">
-            <div className="label">Bénéfice brut</div>
-            <div className={`value num ${signClass(s.grossProfit)}`}>{fmtEur(s.grossProfit)}</div>
-          </div>
+          {urssafRate > 0 ? (
+            <div className="kpi">
+              <div className="label">Après URSSAF</div>
+              <div className={`value num ${signClass(s.netAfterUrssaf)}`}>{fmtEur(s.netAfterUrssaf)}</div>
+            </div>
+          ) : (
+            <div className="kpi">
+              <div className="label">Bénéfice brut</div>
+              <div className={`value num ${signClass(s.grossProfit)}`}>{fmtEur(s.grossProfit)}</div>
+            </div>
+          )}
           <div className="kpi">
             <div className="label">Bénéfice net</div>
             <div className={`value num ${signClass(s.netProfit)}`}>{fmtEur(s.netProfit)}</div>
@@ -134,6 +151,20 @@ export default function PeriodCard({ card, active, vatRegistered }: { card: Card
               <span>= Bénéfice net</span>
               <span className={signClass(s.netProfit)}>{fmtEur(s.netProfit)}</span>
             </div>
+            {urssafRate > 0 && (
+              <>
+                <div className="row">
+                  <span>
+                    − Cotisations URSSAF ({fmtPct(urssafRate)} de {fmtEur(s.urssafBase)} encaissés)
+                  </span>
+                  <span>{fmtEur(-s.urssaf)}</span>
+                </div>
+                <div className="row total">
+                  <span>= Reste pour vous</span>
+                  <span className={signClass(s.netAfterUrssaf)}>{fmtEur(s.netAfterUrssaf)}</span>
+                </div>
+              </>
+            )}
             {!isForecast && s.estimatedFeesSalesTtc > 0 && (
               <div className="note">Frais Amazon estimés pour {fmtEur(s.estimatedFeesSalesTtc)} de ventes pas encore réglées par Amazon.</div>
             )}

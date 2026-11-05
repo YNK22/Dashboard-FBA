@@ -85,3 +85,16 @@ test("estimation des frais : historique ajusté au prix, sinon pourcentage", () 
   assert.equal(estimateLineFees(2, 110, 220, { feesPerUnit: 20, unitPriceTtc: 100 }, 0.35), 43); // (20 + 1.5) * 2
   assert.equal(estimateLineFees(1, 100, 100, undefined, 0.35), 35);
 });
+
+test("micro-entreprise : cotisations URSSAF sur le CA encaissé (ventes − remboursements)", () => {
+  const s = computeSummary(
+    [line({ fees: 30 }), line({ orderId: "B", fees: 30 })],
+    [{ date: "2026-10-20T00:00:00Z", orderId: "A", sku: "SKU1", quantity: 1, refundTtc: 120, vatBack: 20, feesNet: 12, cogsRecovered: 0 }],
+    [],
+    { vatRegistered: false, feesVatRate: 0.2, urssafRate: 0.124 },
+  );
+  assert.equal(s.urssafBase, 120); // 240 encaissés − 120 remboursés
+  assert.equal(s.urssaf, 14.88);
+  assert.equal(s.netAfterUrssaf, Math.round((s.netProfit - 14.88) * 100) / 100);
+  assert.equal(computeSummary([line()], [], [], VAT).urssaf, 0); // pas de taux : pas de calcul
+});

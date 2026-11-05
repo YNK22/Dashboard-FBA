@@ -29,8 +29,17 @@ function presetRange(p: Exclude<Preset, "custom">): { from: string; to: string }
 }
 
 /** Détail du bénéfice net, frais par frais, sur une période au choix. */
-export default function BreakdownPanel({ refreshKey, mkt }: { refreshKey?: string; mkt: string | null }) {
+export default function BreakdownPanel({
+  refreshKey,
+  mkt,
+  onSettingsChange,
+}: {
+  refreshKey?: string;
+  mkt: string | null;
+  onSettingsChange?: () => void;
+}) {
   const [preset, setPreset] = useState<Preset>("all");
+  const [reload, setReload] = useState(0);
   const [custom, setCustom] = useState(() => presetRange("month"));
   const [data, setData] = useState<ProfitBreakdown | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({ fees: true, other: true });
@@ -43,9 +52,14 @@ export default function BreakdownPanel({ refreshKey, mkt }: { refreshKey?: strin
       .then((r) => r.json())
       .then((j) => setData(j.sections ? j : null))
       .catch(() => setData(null));
-  }, [from, to, mkt, refreshKey]);
+  }, [from, to, mkt, refreshKey, reload]);
 
   const s = data?.summary;
+  const rate = data?.urssafRate ?? 0;
+  const saved = () => {
+    setReload((n) => n + 1);
+    onSettingsChange?.();
+  };
 
   return (
     <section className="panel">
@@ -76,10 +90,17 @@ export default function BreakdownPanel({ refreshKey, mkt }: { refreshKey?: strin
         <>
           <div className="breakdown-head num">
             <div>
-              <div className="label">Bénéfice net</div>
-              <div className={`breakdown-hero ${signClass(s.netProfit)}`}>{fmtEur(s.netProfit)}</div>
+              <div className="label">{rate > 0 ? "Ce qu'il vous reste (après URSSAF)" : "Bénéfice net"}</div>
+              <div className={`breakdown-hero ${signClass(rate > 0 ? s.netAfterUrssaf : s.netProfit)}`}>
+                {fmtEur(rate > 0 ? s.netAfterUrssaf : s.netProfit)}
+              </div>
             </div>
             <div className="breakdown-kpis">
+              {rate > 0 && (
+                <span>
+                  Bénéfice avant URSSAF <strong>{fmtEur(s.netProfit)}</strong>
+                </span>
+              )}
               <span>
                 Marge <strong>{fmtPct(s.margin)}</strong>
               </span>
@@ -129,10 +150,33 @@ export default function BreakdownPanel({ refreshKey, mkt }: { refreshKey?: strin
               );
             })}
             <div className="row total">
-              <span>= Bénéfice net</span>
+              <span>= Bénéfice net{rate > 0 ? " (avant URSSAF)" : ""}</span>
               <span className={signClass(s.netProfit)}>{fmtEur(s.netProfit)}</span>
             </div>
+            {rate > 0 && (
+              <>
+                <div className="breakdown-section">
+                  <div className="row section-row">
+                    <span>− Cotisations URSSAF</span>
+                    <span className="neg">{fmtEur(-s.urssaf)}</span>
+                  </div>
+                  <div className="row sub-row">
+                    <span>
+                      {fmtPct(rate)} du CA encaissé ({fmtEur(s.urssafBase)} = ventes {fmtEur(s.salesHt)} − remboursés{" "}
+                      {fmtEur(s.salesHt - s.urssafBase)})
+                    </span>
+                    <span>{fmtEur(-s.urssaf)}</span>
+                  </div>
+                </div>
+                <div className="row total">
+                  <span>= Ce qu&apos;il vous reste</span>
+                  <span className={signClass(s.netAfterUrssaf)}>{fmtEur(s.netAfterUrssaf)}</span>
+                </div>
+              </>
+            )}
           </div>
+
+          <UrssafSetting rate={rate} onSaved={saved} />
 
           <div className="note" style={{ marginTop: 10 }}>
             {data.vatRegistered
@@ -144,5 +188,50 @@ export default function BreakdownPanel({ refreshKey, mkt }: { refreshKey?: strin
         </>
       )}
     </section>
+  );
+}
+
+/** Réglage du taux de cotisations URSSAF (micro-entreprise), enregistré dans le dashboard. */
+function UrssafSetting({ rate, onSaved }: { rate: number; onSaved: () => void }) {
+  const [value, setValue] = useState(() => (rate > 0 ? String(Math.round(rate * 10000) / 100).replace(".", ",") : ""));
+  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  useEffect(() => setValue(rate > 0 ? String(Math.round(rate * 10000) / 100).replace(".", ",") : ""), [rate]);
+
+  const save = async () => {
+    setState("saving");
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urssafRate: value.trim() === "" ? 0 : value }),
+    }).catch(() => null);
+    if (!res?.ok) return setState("error");
+    setState("idle");
+    onSaved();
+  };
+
+  return (
+    <div className="urssaf-setting">
+      <label>
+        Taux URSSAF{" "}
+        <input
+          className="btn"
+          inputMode="decimal"
+          value={value}
+          placeholder="ex. 12,4"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          aria-label="Taux de cotisations URSSAF en %"
+        />{" "}
+        %
+      </label>
+      <button className="btn" onClick={save} disabled={state === "saving"}>
+        {state === "saving" ? "…" : "Enregistrer"}
+      </button>
+      {state === "error" && <span className="warn-text">Taux invalide</span>}
+      <span className="note">
+        Vente de marchandises en micro : cotisations sociales + formation professionnelle, + versement libératoire de l&apos;impôt si vous l&apos;avez choisi.
+        Prenez le taux total indiqué sur votre espace URSSAF. 0 = pas de calcul.
+      </span>
+    </div>
   );
 }
