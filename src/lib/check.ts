@@ -12,6 +12,7 @@ export interface CheckStep {
   label: string;
   ok: boolean;
   detail: string;
+  optional?: boolean; // non nécessaire au dashboard : un échec n'est qu'un avertissement
 }
 
 export async function checkAmazon(): Promise<CheckStep[]> {
@@ -47,7 +48,15 @@ export async function checkAmazon(): Promise<CheckStep[]> {
     const active = res.payload.filter((p) => p.participation.isParticipating).map((p) => p.marketplace.countryCode);
     steps.push({ label: "Compte vendeur (Sellers API)", ok: true, detail: `vous vendez sur : ${active.join(", ") || "—"}` });
   } catch (e) {
-    steps.push({ label: "Compte vendeur (Sellers API)", ok: false, detail: (e as Error).message });
+    const denied = /403|denied|unauthorized/i.test((e as Error).message);
+    steps.push({
+      label: "Compte vendeur (Sellers API) — facultatif",
+      ok: false,
+      optional: true,
+      detail: denied
+        ? "Non autorisé pour votre application. Sans conséquence : le dashboard n'utilise pas cette API (elle sert seulement à afficher la liste des pays où vous vendez)."
+        : (e as Error).message,
+    });
   }
 
   try {

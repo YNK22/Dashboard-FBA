@@ -36,6 +36,7 @@ interface Step {
   label: string;
   ok: boolean;
   detail: string;
+  optional?: boolean;
 }
 
 const dt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—");
@@ -146,7 +147,7 @@ export default function ConnexionPage() {
             {steps.map((st) => (
               <div key={st.label}>
                 <strong>
-                  {st.ok ? "✅" : "❌"} {st.label}
+                  {st.ok ? "✅" : st.optional ? "ℹ️" : "❌"} {st.label}
                 </strong>
                 <div className="note" style={{ wordBreak: "break-word" }}>
                   {st.detail}

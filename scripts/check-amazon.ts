@@ -6,7 +6,7 @@ import { checkAmazon } from "../src/lib/check";
  * (aussi disponible dans le dashboard : page « Connexion Amazon »)
  */
 checkAmazon().then((steps) => {
-  for (const s of steps) console.log(`${s.ok ? "✅" : "❌"} ${s.label}\n   ${s.detail}\n`);
-  if (steps.every((s) => s.ok)) console.log("Tout est bon : npm run sync  (la première synchro peut prendre plusieurs minutes)");
+  for (const s of steps) console.log(`${s.ok ? "✅" : s.optional ? "ℹ️ " : "❌"} ${s.label}\n   ${s.detail}\n`);
+  if (steps.every((s) => s.ok || s.optional)) console.log("Tout est bon : npm run sync  (la première synchro peut prendre plusieurs minutes)");
   else process.exit(1);
 });
