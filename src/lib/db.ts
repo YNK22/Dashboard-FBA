@@ -137,8 +137,8 @@ CREATE TABLE IF NOT EXISTS scrape_sources (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   name          TEXT NOT NULL,
   base_url      TEXT NOT NULL,
-  mode          TEXT NOT NULL DEFAULT 'hybrid',   -- sitemap | crawl | hybrid
-  start_urls    TEXT,                             -- une URL par ligne (sitemaps ou pages catégorie)
+  mode          TEXT NOT NULL DEFAULT 'hybrid',   -- sitemap | crawl | hybrid | feed
+  start_urls    TEXT,                             -- une URL par ligne (sitemaps, pages catégorie, ou flux produits en mode feed)
   url_pattern   TEXT,                             -- filtre facultatif des URLs produit (texte ou expression régulière)
   interval_days INTEGER NOT NULL DEFAULT 21,
   auto          INTEGER NOT NULL DEFAULT 1,
@@ -208,6 +208,9 @@ function migrate(db: Database.Database): void {
   if (!cols.has("fee_tax")) db.exec("ALTER TABLE finance_lines ADD COLUMN fee_tax REAL DEFAULT 0");
   // Détail des frais par type Amazon : JSON { "Commission": [HT, TVA], ... } (montants signés)
   if (!cols.has("fee_detail")) db.exec("ALTER TABLE finance_lines ADD COLUMN fee_detail TEXT");
+  // Scraping : détail des erreurs d'un run (JSON [{ step, url, error }], 30 au plus)
+  const runCols = new Set((db.prepare("PRAGMA table_info(scrape_runs)").all() as { name: string }[]).map((c) => c.name));
+  if (!runCols.has("error_details")) db.exec("ALTER TABLE scrape_runs ADD COLUMN error_details TEXT");
 }
 
 /** Incrémenté à chaque écriture de données : invalide les caches de calcul (FIFO...). */

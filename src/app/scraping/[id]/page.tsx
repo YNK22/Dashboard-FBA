@@ -28,10 +28,19 @@ interface Run {
   new_offers: number;
   errors: number;
   message: string | null;
+  error_details: string | null; // JSON [{ step, url, error }]
 }
 
 const STATUS_FR: Record<string, string> = { running: "en cours", success: "OK", error: "erreur", cancelled: "arrêté", interrupted: "interrompu" };
 const d = (iso: string) => new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+function errorDetails(r: Run): { step: string; url: string; error: string }[] {
+  try {
+    return r.error_details ? JSON.parse(r.error_details) : [];
+  } catch {
+    return [];
+  }
+}
+
 const price = (p: Product) => (p.price === null ? null : p.currency && p.currency !== "EUR" ? `${p.price} ${p.currency}` : fmtEur(p.price));
 
 export default function ScrapingProductsPage() {
@@ -44,6 +53,9 @@ export default function ScrapingProductsPage() {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | "ean" | "new">("all");
   const [showRuns, setShowRuns] = useState(false);
+  const [reload, setReload] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; error?: boolean } | null>(null);
 
   useEffect(() => {
     fetch(`/api/scraping/${id}`, { cache: "no-store" })
@@ -52,7 +64,20 @@ export default function ScrapingProductsPage() {
         setSource(j.source ?? null);
         setRuns(j.runs ?? []);
       });
-  }, [id]);
+  }, [id, reload]);
+
+  /** Import d'un fichier flux produits (CSV ou XML) : envoyé tel quel au serveur. */
+  const importFile = async (file: File | undefined) => {
+    if (!file) return;
+    setImporting(true);
+    setMsg(null);
+    const res = await fetch(`/api/scraping/${id}/import?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file }).catch(() => null);
+    const j = res ? await res.json().catch(() => ({})) : {};
+    setImporting(false);
+    setMsg(res?.ok ? { text: `${j.message} : ${fmtInt(j.offers)} offre(s), dont ${fmtInt(j.newOffers)} nouvelle(s).` } : { text: j.error ?? "Import impossible", error: true });
+    setReload((n) => n + 1);
+    setPage(1);
+  };
 
   const qs = useCallback(
     (extra = "") => `q=${encodeURIComponent(q)}${filter === "ean" ? "&ean=1" : filter === "new" ? "&new=1" : ""}${extra}`,
@@ -85,10 +110,31 @@ export default function ScrapingProductsPage() {
             {fmtInt(source?.products ?? 0)} produits, dont {fmtInt(source?.withEan ?? 0)} avec EAN
           </div>
         </div>
-        <a className="btn" href={`/api/scraping/${id}/products?${qs("&format=csv")}`}>
-          ⬇ CSV
-        </a>
+        <div className="scrape-actions">
+          <label className="btn" title="Flux produits CSV ou XML (Google Shopping, affiliation, fichier fournisseur)">
+            {importing ? "Import…" : "⬆ Importer un flux"}
+            <input
+              type="file"
+              accept=".csv,.tsv,.txt,.xml,text/csv,text/xml,application/xml"
+              hidden
+              disabled={importing}
+              onChange={(e) => {
+                void importFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <a className="btn" href={`/api/scraping/${id}/products?${qs("&format=csv")}`}>
+            ⬇ CSV
+          </a>
+        </div>
       </div>
+
+      {msg && (
+        <div className={`banner${msg.error ? " error" : ""}`} onClick={() => setMsg(null)}>
+          {msg.text}
+        </div>
+      )}
 
       <section className="panel">
         <div className="panel-head">
@@ -164,6 +210,18 @@ export default function ScrapingProductsPage() {
                   </span>
                 </div>
                 {r.message && <div className="note">{r.message}</div>}
+                {errorDetails(r).length > 0 && (
+                  <details className="note">
+                    <summary>Détail des erreurs ({errorDetails(r).length})</summary>
+                    {errorDetails(r).map((e, i) => (
+                      <div key={i} className="run-error">
+                        <strong>{e.step}</strong> · {e.error}
+                        <br />
+                        <span className="muted">{e.url}</span>
+                      </div>
+                    ))}
+                  </details>
+                )}
               </div>
             ))}
           </div>

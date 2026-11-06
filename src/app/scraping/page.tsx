@@ -9,6 +9,10 @@ const MODES: Record<SourceView["mode"], { label: string; help: string }> = {
   sitemap: { label: "SITEMAP", help: "Lit le plan du site (sitemap.xml) : rapide, tout le catalogue d'un coup." },
   crawl: { label: "CRAWL", help: "Suit les liens à partir des pages de départ (catégories) : pour les sites sans sitemap." },
   hybrid: { label: "HYBRID", help: "Sitemap d'abord, puis suit les liens : le plus complet." },
+  feed: {
+    label: "FLUX",
+    help: "Lit un flux produits (CSV ou XML : Google Shopping, Awin, Effinity, fichier fournisseur…) au lieu des pages : la solution pour les sites qui bloquent les robots.",
+  },
 };
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -286,17 +290,27 @@ export default function ScrapingPage() {
               <textarea
                 rows={3}
                 autoCapitalize="off"
-                placeholder={"https://www.boutique.fr/sitemap_products.xml\nhttps://www.boutique.fr/bricolage/"}
+                placeholder={
+                  form.mode === "feed"
+                    ? "https://www.boutique.fr/flux/google-shopping.xml"
+                    : "https://www.boutique.fr/sitemap_products.xml\nhttps://www.boutique.fr/bricolage/"
+                }
                 value={form.start_urls}
                 onChange={(e) => setForm({ ...form, start_urls: e.target.value })}
               />
-              <span className="note">Sitemaps (.xml) et/ou pages catégorie. Vide : sitemap annoncé dans robots.txt, et page d&apos;accueil.</span>
+              <span className="note">
+                {form.mode === "feed"
+                  ? "Adresse(s) du flux produits. Vide : importez le fichier depuis la page Produits de la source."
+                  : "Sitemaps (.xml) et/ou pages catégorie. Vide : sitemap annoncé dans robots.txt, et page d'accueil."}
+              </span>
             </label>
-            <label className="field">
-              Filtre des URLs produit <span className="muted">(facultatif)</span>
-              <input autoCapitalize="off" placeholder="/produit/  ou  -p\d+\.html$" value={form.url_pattern} onChange={(e) => setForm({ ...form, url_pattern: e.target.value })} />
-              <span className="note">Ne lit que les pages dont l&apos;URL contient ce texte (ou correspond à cette expression) : beaucoup plus rapide.</span>
-            </label>
+            {form.mode !== "feed" && (
+              <label className="field">
+                Filtre des URLs produit <span className="muted">(facultatif)</span>
+                <input autoCapitalize="off" placeholder="/produit/  ou  -p\d+\.html$" value={form.url_pattern} onChange={(e) => setForm({ ...form, url_pattern: e.target.value })} />
+                <span className="note">Ne lit que les pages dont l&apos;URL contient ce texte (ou correspond à cette expression) : beaucoup plus rapide.</span>
+              </label>
+            )}
             <div className="field-row">
               <label className="field">
                 Tous les (jours)

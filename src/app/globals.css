@@ -1079,6 +1079,13 @@ input.cell.search {
   padding: 4px 0;
   border-bottom: 1px dashed var(--border);
 }
+.run-row summary {
+  cursor: pointer;
+}
+.run-error {
+  padding: 4px 0 4px 12px;
+  overflow-wrap: anywhere;
+}
 
 /* ---------- Barre d'onglets du bas (téléphone) ---------- */
 

@@ -92,3 +92,38 @@ test("page normale avec reCAPTCHA (newsletter) ou script DataDome : pas une page
     <form><div class="g-recaptcha"></div></form></html>`;
   assert.equal(isBotChallenge(page), false);
 });
+
+test("flux Google Shopping (RSS) : titre, GTIN, prix, lien", async () => {
+  const { parseFeed } = await import("../src/lib/scraper/feed");
+  const xml = `<?xml version="1.0"?><rss xmlns:g="http://base.google.com/ns/1.0"><channel><title>Boutique</title>
+    <item><g:id>12</g:id><title><![CDATA[Facom Clé mâle 6 mm]]></title><link>https://shop.example/p/12</link>
+      <g:price>12.90 EUR</g:price><g:gtin>3148511238257</g:gtin></item>
+    <item><g:title>Sans EAN &amp; co</g:title><g:link>https://shop.example/p/13</g:link><g:sale_price>8,50 €</g:sale_price></item>
+  </channel></rss>`;
+  assert.deepEqual(parseFeed(xml), [
+    { title: "Facom Clé mâle 6 mm", ean: "3148511238257", price: 12.9, currency: "EUR", url: "https://shop.example/p/12" },
+    { title: "Sans EAN & co", ean: null, price: 8.5, currency: "EUR", url: "https://shop.example/p/13" },
+  ]);
+});
+
+test("flux CSV : séparateur « ; », en-têtes français, guillemets", async () => {
+  const { parseFeed } = await import("../src/lib/scraper/feed");
+  const csv = `﻿Référence;Désignation;Code EAN;Prix TTC;URL produit\r\n` +
+    `A1;"Scie ""égoïne"" 500 mm";4902505106446;"1 234,50";https://shop.example/p/a1\r\n` +
+    `A2;;3148511238257;5;https://shop.example/p/a2\r\n`;
+  assert.deepEqual(parseFeed(csv), [{ title: 'Scie "égoïne" 500 mm', ean: "4902505106446", price: 1234.5, currency: null, url: "https://shop.example/p/a1" }]);
+});
+
+test("flux CSV Awin (virgules, colonnes product_name / ean / search_price / aw_deep_link)", async () => {
+  const { parseFeed } = await import("../src/lib/scraper/feed");
+  const csv = `aw_deep_link,product_name,search_price,currency,ean\nhttps://www.awin1.com/pclick.php?p=1,Perceuse 18V,"89.90",EUR,5060134334285\n`;
+  assert.deepEqual(parseFeed(csv), [{ title: "Perceuse 18V", ean: "5060134334285", price: 89.9, currency: "EUR", url: "https://www.awin1.com/pclick.php?p=1" }]);
+});
+
+test("protection anti-robots reconnue d'après la réponse 403", async () => {
+  const { detectProtection } = await import("../src/lib/scraper/feed");
+  assert.equal(detectProtection(new Headers({ server: "cloudflare", "cf-ray": "8a1b-CDG" }), "Forbidden"), "Cloudflare");
+  assert.equal(detectProtection({ "x-datadome": "protected" }), "DataDome");
+  assert.equal(detectProtection(new Headers({ server: "AkamaiGHost" }), "Access Denied"), "Akamai");
+  assert.equal(detectProtection(new Headers({ server: "nginx" }), "Forbidden"), null);
+});

@@ -20,7 +20,7 @@ export function validateSource(body: Record<string, unknown>, partial = false): 
   if (body.name !== undefined && String(body.name).trim()) data.name = String(body.name).trim().slice(0, 80);
   if (body.mode !== undefined || !partial) {
     const m = String(body.mode ?? "hybrid");
-    if (!["sitemap", "crawl", "hybrid"].includes(m)) return { data, error: "Mode invalide" };
+    if (!["sitemap", "crawl", "hybrid", "feed"].includes(m)) return { data, error: "Mode invalide" };
     data.mode = m as ScrapeSource["mode"];
   }
   if (body.start_urls !== undefined) data.start_urls = String(body.start_urls ?? "").trim().slice(0, 5000) || null;
